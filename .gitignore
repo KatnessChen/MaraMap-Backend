@@ -1,0 +1,18 @@
+# Cursor IDE
+.cursor/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build / runtime
+dist/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
