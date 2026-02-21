@@ -109,7 +109,7 @@ In **both** dev and production Supabase projects:
 
 For a 24/7 robust cloud environment, we containerize the Nest.js application using Docker and deploy it to Google Cloud. We deploy **two Cloud Run services** from the start:
 
-- **Dev:** region **northamerica-northeast2** (Toronto)—Eastern Canada, for the development team.
+- **Dev:** region **northamerica-northeast1** (Montreal)—Eastern Canada, for the development team.
 - **Production:** region **asia-east1** (Taiwan)—for end users.
 
 ### Recommended Compute Option: Google Cloud Run
@@ -183,6 +183,6 @@ Next.js (Asia) ──► Nest.js API (asia-east1) ──► Supabase (production
      ▼
 CI/CD ──► build image ──► Artifact Registry (multi-region or per-region)
                 │
-                ├──► Cloud Run dev (Montreal/Toronto)
+                ├──► Cloud Run dev (Montreal)
                 └──► Cloud Run production (Taiwan)
 ```
