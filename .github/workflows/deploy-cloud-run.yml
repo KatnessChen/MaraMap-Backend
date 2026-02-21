@@ -3,15 +3,15 @@ name: Deploy to Cloud Run
 on:
   push:
     branches:
-      - develop  # Deploy to dev (Toronto)
+      - develop  # Deploy to dev (Montreal)
       - main     # Deploy to production (Taiwan)
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      REGION: ${{ github.ref == 'refs/heads/main' && 'asia-east1' || 'northamerica-northeast2' }}
-      SERVICE_NAME: ${{ github.ref == 'refs/heads/main' && 'social-media-backend-prod' || 'social-media-backend-dev' }}
+      REGION: ${{ github.ref == 'refs/heads/main' && 'asia-east1' || 'northamerica-northeast1' }}
+      SERVICE_NAME: ${{ github.ref == 'refs/heads/main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +29,7 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/social-media-backend/social-media-backend:${{ github.sha }}"
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/maramap-backend/maramap-backend:${{ github.sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
