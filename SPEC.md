@@ -1,8 +1,8 @@
-# 🏗️ SocialToBlog: Nest.js Backend & Database Spec
+# 🏗️ MaraMap-Backend: Nest.js Backend & Database Spec
 
 ## 1. Module Overview
 
-This Nest.js application serves as the central nervous system for the SocialToBlog platform. It operates with two primary responsibilities:
+This Nest.js application serves as the central nervous system for the Journify platform. It operates with two primary responsibilities:
 
 - **The Ingestion Gateway:** Receiving raw, unstructured data from the Chrome Extension scraper, persisting it safely, and dispatching processing jobs to the n8n AI worker asynchronously.
 - **The Content API:** Serving structured, polished blog posts and geospatial map data to the Next.js frontend.
@@ -19,9 +19,9 @@ This Nest.js application serves as the central nervous system for the SocialToBl
 
 Receives raw HTML/text from the Chrome Extension.
 
-| Property        | Value                    |
-|----------------|---------------------------|
-| **Endpoint**   | `POST /api/v1/ingest`     |
+| Property           | Value                             |
+| ------------------ | --------------------------------- |
+| **Endpoint**       | `POST /api/v1/ingest`             |
 | **Authentication** | Bearer Token (Admin/User API Key) |
 
 **Behavior:**
@@ -36,10 +36,10 @@ Receives raw HTML/text from the Chrome Extension.
 
 Serves the published content to the reader-facing blog and map interfaces.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| Blog List | `GET /api/v1/posts` | Supports pagination and filtering by `PUBLISHED` status. |
-| Post Detail | `GET /api/v1/posts/:id` | Single post by ID. |
+| Endpoint    | Method                  | Description                                                                  |
+| ----------- | ----------------------- | ---------------------------------------------------------------------------- |
+| Blog List   | `GET /api/v1/posts`     | Supports pagination and filtering by `PUBLISHED` status.                     |
+| Post Detail | `GET /api/v1/posts/:id` | Single post by ID.                                                           |
 | Map Markers | `GET /api/v1/locations` | Returns only `id`, `title`, and `location_geo` for efficient map clustering. |
 
 ---
@@ -109,7 +109,7 @@ In **both** dev and production Supabase projects:
 
 For a 24/7 robust cloud environment, we containerize the Nest.js application using Docker and deploy it to Google Cloud. We deploy **two Cloud Run services** from the start:
 
-- **Dev:** region **northamerica-northeast1** (Montreal) or **northamerica-northeast2** (Toronto)—Eastern Canada, for the development team.
+- **Dev:** region **northamerica-northeast2** (Toronto)—Eastern Canada, for the development team.
 - **Production:** region **asia-east1** (Taiwan)—for end users.
 
 ### Recommended Compute Option: Google Cloud Run
@@ -124,12 +124,12 @@ While a Compute Engine VM is an option, **Cloud Run** is the ideal choice for th
 
 Each Cloud Run service (dev and production) has its own configuration. The following secrets must be injected per environment (different values for dev vs production):
 
-| Variable | Description |
-|----------|-------------|
-| `SUPABASE_URL` | The project URL. |
-| `SUPABASE_SERVICE_ROLE_KEY` | For backend admin access (bypassing RLS). |
-| `N8N_WEBHOOK_URL` | The trigger URL for our AI agent. |
-| `INTERNAL_API_SECRET` | To secure the endpoint that n8n calls when updating post statuses. |
+| Variable                    | Description                                                        |
+| --------------------------- | ------------------------------------------------------------------ |
+| `SUPABASE_URL`              | The project URL.                                                   |
+| `SUPABASE_SERVICE_ROLE_KEY` | For backend admin access (bypassing RLS).                          |
+| `N8N_WEBHOOK_URL`           | The trigger URL for our AI agent.                                  |
+| `INTERNAL_API_SECRET`       | To secure the endpoint that n8n calls when updating post statuses. |
 
 ---
 
@@ -139,21 +139,21 @@ The development team is in Eastern Canada; end users are in Taiwan. Resources ar
 
 ### 5.1 Principles
 
-| Concern | Strategy |
-|---------|----------|
-| **User experience** | Production API, frontend, and DB are in Taiwan/Asia to minimize latency. |
-| **Developer experience** | Dev environment, CI/CD, logs, and debugging are in Eastern Canada for fast iteration. |
-| **Cost** | Production in a single region (Asia); dev in a single region (East Canada); add CDN only if needed. |
+| Concern                  | Strategy                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------- |
+| **User experience**      | Production API, frontend, and DB are in Taiwan/Asia to minimize latency.                            |
+| **Developer experience** | Dev environment, CI/CD, logs, and debugging are in Eastern Canada for fast iteration.               |
+| **Cost**                 | Production in a single region (Asia); dev in a single region (East Canada); add CDN only if needed. |
 
 ### 5.2 Region Overview
 
-| Resource | Production | Dev |
-|----------|------------|-----|
-| **Nest.js API (Cloud Run)** | **asia-east1** (Taiwan) | **northamerica-northeast1** (Montreal) or **northamerica-northeast2** (Toronto) |
-| **Supabase (DB + Storage)** | Asia (e.g. Singapore / East Asia per Supabase options) | Separate dev project; region near East Canada if available, otherwise same schema in any region |
-| **Container image (Artifact Registry)** | Same image; push to **asia-east1** and **northamerica-northeast1** (multi-region or per-region) | Same as production |
-| **n8n workflows** | Same region as production API (Asia) to keep webhook latency low | East Canada, connected to dev API |
-| **Next.js frontend** | **Taiwan / East Asia** (e.g. Vercel); if on GCP, use **asia-east1** | East Canada or same as production for testing |
+| Resource                                | Production                                                                                      | Dev                                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Nest.js API (Cloud Run)**             | **asia-east1** (Taiwan)                                                                         | **northamerica-northeast1** (Montreal) or **northamerica-northeast2** (Toronto)                 |
+| **Supabase (DB + Storage)**             | Asia (e.g. Singapore / East Asia per Supabase options)                                          | Separate dev project; region near East Canada if available, otherwise same schema in any region |
+| **Container image (Artifact Registry)** | Same image; push to **asia-east1** and **northamerica-northeast1** (multi-region or per-region) | Same as production                                                                              |
+| **n8n workflows**                       | Same region as production API (Asia) to keep webhook latency low                                | East Canada, connected to dev API                                                               |
+| **Next.js frontend**                    | **Taiwan / East Asia** (e.g. Vercel); if on GCP, use **asia-east1**                             | East Canada or same as production for testing                                                   |
 
 ### 5.3 Supabase Regions
 
