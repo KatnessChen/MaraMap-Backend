@@ -1,24 +1,29 @@
 name: Deploy to Cloud Run
 
 on:
-  push:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
     branches:
       - develop  # Deploy to dev (Montreal)
       - main     # Deploy to production (Taiwan)
 
 jobs:
   deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
-      REGION: ${{ github.ref == 'refs/heads/main' && 'asia-east1' || 'northamerica-northeast1' }}
-      SERVICE_NAME: ${{ github.ref == 'refs/heads/main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
-      SUPABASE_URL: ${{ github.ref == 'refs/heads/main' && 'SUPABASE_URL_PROD' || 'SUPABASE_URL_DEV' }}
-      SUPABASE_KEY: ${{ github.ref == 'refs/heads/main' && 'SUPABASE_KEY_PROD' || 'SUPABASE_KEY_DEV' }}
+      REGION: ${{ github.event.workflow_run.head_branch == 'main' && 'asia-east1' || 'northamerica-northeast1' }}
+      SERVICE_NAME: ${{ github.event.workflow_run.head_branch == 'main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
+      SUPABASE_URL: ${{ github.event.workflow_run.head_branch == 'main' && 'SUPABASE_URL_PROD' || 'SUPABASE_URL_DEV' }}
+      SUPABASE_KEY: ${{ github.event.workflow_run.head_branch == 'main' && 'SUPABASE_KEY_PROD' || 'SUPABASE_KEY_DEV' }}
     permissions:
       contents: 'read'
       id-token: 'write'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: google-github-actions/auth@v2
         with:
@@ -36,7 +41,7 @@ jobs:
       - name: Build and push Docker image
         id: build
         run: |
-          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/maramap-backend/maramap-backend:${{ github.sha }}"
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/maramap-backend/maramap-backend:${{ github.event.workflow_run.head_sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT

@@ -14,6 +14,11 @@ node_modules/
 dist/
 *.log
 
+# Test reports
+coverage/
+test-report/
+test-results/
+
 # OS
 .DS_Store
 Thumbs.db
