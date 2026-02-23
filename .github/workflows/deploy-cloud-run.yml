@@ -12,6 +12,11 @@ jobs:
     env:
       REGION: ${{ github.ref == 'refs/heads/main' && 'asia-east1' || 'northamerica-northeast1' }}
       SERVICE_NAME: ${{ github.ref == 'refs/heads/main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
+      SUPABASE_URL: ${{ github.ref == 'refs/heads/main' && 'SUPABASE_URL_PROD' || 'SUPABASE_URL_DEV' }}
+      SUPABASE_KEY: ${{ github.ref == 'refs/heads/main' && 'SUPABASE_KEY_PROD' || 'SUPABASE_KEY_DEV' }}
+    permissions:
+      contents: 'read'
+      id-token: 'write'
     steps:
       - uses: actions/checkout@v4
 
@@ -43,4 +48,4 @@ jobs:
             --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --set-secrets="SUPABASE_URL=supabase_url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase_service_role_key:latest"
+            --set-secrets="SUPABASE_URL=${{ env.SUPABASE_URL }}:latest,SUPABASE_SERVICE_ROLE_KEY=${{ env.SUPABASE_KEY }}:latest"
