@@ -1,5 +1,6 @@
-# Cursor IDE
+# IDE
 .cursor/
+.github/prompts
 
 # Dependencies
 node_modules/
