@@ -9,6 +9,8 @@ MaraMap-Backend is a **NestJS** REST API that serves the MaraMap platform. It ha
 
 > Keep the backend **lightweight and fast**. Delegate all heavy work (AI processing, image downloading) to the n8n worker.
 
+> For detailed project goals and specifications, refer to `/SPEC.md`.
+
 ---
 
 ## NestJS Module Structure & Coding Conventions

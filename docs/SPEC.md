@@ -2,7 +2,7 @@
 
 ## 1. Module Overview
 
-This Nest.js application serves as the central nervous system for the Journify platform. It operates with two primary responsibilities:
+This Nest.js application serves as the central nervous system for the MaraMap platform. It operates with two primary responsibilities:
 
 - **The Ingestion Gateway:** Receiving raw, unstructured data from the Chrome Extension scraper, persisting it safely, and dispatching processing jobs to the n8n AI worker asynchronously.
 - **The Content API:** Serving structured, polished blog posts and geospatial map data to the Next.js frontend.
