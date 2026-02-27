@@ -215,8 +215,8 @@ The coverage report is automatically generated at `coverage/index.html` and will
 
 ## General Rules
 
+- **Default to Mocking Third-Party Services:** Unless explicitly specified otherwise, always mock all third-party service calls (Supabase, n8n, external APIs) by default. Tests must be deterministic, fast, and independent of external systems. Never make real HTTP calls or real DB calls in unit, integration, or e2e tests.
 - **Never** use `jest.setTimeout` to paper over slow tests. Fix the root cause instead.
-- **Never** make real HTTP calls or real DB calls in unit or integration tests.
 - **Always** assert on the exact HTTP status code and the shape of the response body.
 - Test description format: `'should [verb] [outcome] when [condition]'`.
 - Use `describe` blocks to group by method or scenario, not by file.
