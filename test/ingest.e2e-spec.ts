@@ -4,6 +4,7 @@ import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { SupabaseService } from '../src/supabase/supabase.service';
 import { SupabaseAuthGuard } from '../src/auth/guards/supabase-auth.guard';
+import { SupabaseStrategy } from '../src/auth/strategies/supabase.strategy';
 
 describe('POST /api/v1/ingest (e2e)', () => {
   let app: INestApplication;
@@ -59,6 +60,10 @@ describe('POST /api/v1/ingest (e2e)', () => {
           };
           return true;
         }),
+      })
+      .overrideProvider(SupabaseStrategy)
+      .useValue({
+        validate: jest.fn(() => ({ userId: 'test-user', email: 'test@example.com' })),
       })
       .compile();
 
