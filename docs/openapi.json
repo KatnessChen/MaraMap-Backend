@@ -1,0 +1,181 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1": {
+      "get": {
+        "operationId": "AppController_getHello",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        }
+      }
+    },
+    "/health-check": {
+      "get": {
+        "operationId": "HealthController_check",
+        "summary": "Health check",
+        "description": "Returns service status and current timestamp.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Service is healthy."
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "AuthController_login",
+        "summary": "Login",
+        "description": "Authenticates a user via Supabase and returns an access token valid for 1 hour (Supabase default). No refresh token is issued — the Chrome Extension re-prompts login on 401.",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "example": {
+                    "token": "<supabase_access_token>"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials."
+          }
+        },
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/ingest": {
+      "post": {
+        "operationId": "IngestController_create",
+        "summary": "Ingest a scraped post",
+        "description": "Receives a raw post payload from the Chrome Extension, saves it as PENDING, and queues a Cloud Tasks job for async processing.",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIngestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Post accepted and queued."
+          },
+          "400": {
+            "description": "Validation failed."
+          },
+          "401": {
+            "description": "Unauthorized."
+          },
+          "409": {
+            "description": "Post already exists (duplicate source_id)."
+          }
+        },
+        "tags": [
+          "Ingestion"
+        ],
+        "security": [
+          {
+            "supabase-jwt": []
+          }
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "MaraMap API",
+    "description": "MaraMap Backend API — Ingestion & Content endpoints",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "supabase-jwt": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "user@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "password123"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "CreateIngestDto": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "Facebook Post ID — used for idempotency checks",
+            "example": "story_fbid_1234567890"
+          },
+          "original_url": {
+            "type": "string",
+            "description": "Original URL of the scraped Facebook post",
+            "example": "https://www.facebook.com/permalink.php?story_fbid=1234567890"
+          },
+          "raw_text": {
+            "type": "string",
+            "description": "Raw text content extracted from the post",
+            "example": "今天去了淡水老街，推薦這家魚丸湯！"
+          },
+          "raw_images": {
+            "description": "Array of image URLs found in the post",
+            "example": [
+              "https://scontent-tpe1-1.xx.fbcdn.net/v/t1.0-9/photo.jpg"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "source_id",
+          "original_url",
+          "raw_text"
+        ]
+      }
+    }
+  }
+}
