@@ -32,6 +32,9 @@ describe('IngestService', () => {
 
     service = module.get<IngestService>(IngestService);
     jest.clearAllMocks();
+    jest.spyOn(service['logger'], 'error').mockImplementation(() => {});
+    jest.spyOn(service['logger'], 'debug').mockImplementation(() => {});
+    jest.spyOn(service['logger'], 'log').mockImplementation(() => {});
   });
 
   it('should be defined', () => {
