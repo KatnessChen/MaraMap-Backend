@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { CreateIngestDto } from './dto/create-ingest.dto';
 
@@ -19,7 +23,9 @@ export class IngestService {
   ): Promise<IngestResult> {
     const client = this.supabaseService.getClient();
 
-    this.logger.debug(`Ingesting post - source_id: ${dto.source_id}, userId: ${userId}`);
+    this.logger.debug(
+      `Ingesting post - source_id: ${dto.source_id}, userId: ${userId}`,
+    );
 
     // Idempotency check: source_id is globally unique per DB schema
     const { data: existing, error: selectError } = await client
@@ -36,7 +42,9 @@ export class IngestService {
     }
 
     if (existing) {
-      this.logger.log(`Post already exists - source_id: ${dto.source_id}, postId: ${existing.id}`);
+      this.logger.log(
+        `Post already exists - source_id: ${dto.source_id}, postId: ${existing.id}`,
+      );
       return { message: 'Already exists', postId: existing.id as string };
     }
 
@@ -70,10 +78,14 @@ export class IngestService {
 
     if (!inserted) {
       this.logger.error('Insert returned no data');
-      throw new InternalServerErrorException('Failed to save post: No data returned');
+      throw new InternalServerErrorException(
+        'Failed to save post: No data returned',
+      );
     }
 
-    this.logger.log(`Post created successfully - postId: ${inserted.id}, source_id: ${dto.source_id}`);
+    this.logger.log(
+      `Post created successfully - postId: ${inserted.id}, source_id: ${dto.source_id}`,
+    );
 
     // TODO: Dispatch GCP Cloud Task for async AI processing
     // e.g. await this.cloudTasksService.enqueue({ postId: inserted.id });
