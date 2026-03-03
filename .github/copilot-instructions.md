@@ -4,12 +4,24 @@
 
 MaraMap-Backend is a **NestJS** REST API that serves the MaraMap platform. It has two responsibilities:
 
-1. **Ingestion Gateway** — receives raw HTML/text from a Chrome Extension, persists it, and dispatches async jobs to an n8n AI worker.
+1. **Ingestion Gateway** — receives raw HTML/text from a Chrome Extension, persists it, and dispatches async jobs to Cloud Run Jobs via Cloud Tasks.
 2. **Content API** — serves structured blog posts and geospatial map data to the Next.js frontend.
 
-> Keep the backend **lightweight and fast**. Delegate all heavy work (AI processing, image downloading) to the n8n worker.
+> Keep the backend **lightweight and fast**. Delegate all heavy work (AI processing, image downloading) to Cloud Run Jobs.
 
 > For detailed project goals and specifications, refer to `/SPEC.md`.
+
+---
+
+## Package Manager
+
+This project uses **pnpm** as the package manager. Always use `pnpm` for installing dependencies, not `npm` or `yarn`.
+
+```bash
+pnpm add <package>          # add dependency
+pnpm add -D <package>       # add dev dependency
+pnpm install                # install all dependencies
+```
 
 ---
 
@@ -48,7 +60,7 @@ All endpoints are prefixed with `/api/v1/`.
 
 - **Success:** return the resource or a minimal acknowledgement object; do **not** wrap in a `{ data: ... }` envelope unless it's a paginated list.
 - **Paginated lists:** return `{ items: [...], total: number, page: number, limit: number }`.
-- **Ingestion endpoint** (`POST /api/v1/ingest`): always return **HTTP 202 Accepted** immediately after queuing — never block on n8n processing.
+- **Ingestion endpoint** (`POST /api/v1/ingest`): always return **HTTP 202 Accepted** immediately after queuing — never block on Cloud Run Jobs processing.
 - **Errors:** use NestJS built-in HTTP exceptions so the response shape is consistent: `{ statusCode, message, error }`.
 
 ### Ingestion Endpoint Behavior
@@ -58,7 +70,7 @@ When handling `POST /api/v1/ingest`:
 1. Validate the DTO.
 2. Check `source_id` for idempotency — if the record already exists, return **409 Conflict**.
 3. Save the record to the `posts` table with `status = 'PENDING'`.
-4. Fire-and-forget: trigger the n8n webhook asynchronously (do **not** await the result before responding).
+4. Fire-and-forget: enqueue a Cloud Tasks job asynchronously (do **not** await the result before responding).
 5. Return **202 Accepted**.
 
 ---
@@ -122,8 +134,9 @@ All required environment variables. Access via `ConfigService`, not `process.env
 | ------------------------- | ------------------------------------------------------- |
 | `SUPABASE_URL`            | Supabase project URL                                    |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key for admin access            |
-| `N8N_WEBHOOK_URL`         | n8n trigger URL for AI processing jobs                  |
-| `INTERNAL_API_SECRET`     | Secret used to authenticate callbacks from n8n → backend |
+| `CLOUD_TASKS_QUEUE_NAME`  | Cloud Tasks queue name for async job processing         |
+| `CLOUD_TASKS_LOCATION`    | Cloud Tasks queue location (matches Cloud Run region)   |
+| `INTERNAL_API_SECRET`     | Secret used to authenticate callbacks from Cloud Run Jobs → backend |
 
 Never log or expose these values. Use `@nestjs/config` validation schema to enforce they are present at startup.
 
@@ -137,7 +150,7 @@ Two environments only — **dev** and **production**:
 | --------------- | -------------------------------------- | ------------------------ |
 | Cloud Run       | `northamerica-northeast1` (Montreal)   | `asia-east1` (Taiwan)    |
 | Supabase        | Separate dev project (East Canada region preferred) | Asia region project |
-| n8n             | East Canada, connected to dev API      | Asia, connected to prod API |
+| Cloud Run Jobs  | East Canada, connected to dev API      | Asia, connected to prod API |
 
 ### Rules
 

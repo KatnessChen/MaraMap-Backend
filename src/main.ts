@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -16,6 +17,28 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('MaraMap API')
+      .setDescription('MaraMap Backend API — Ingestion & Content endpoints')
+      .setVersion('1.0')
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        'supabase-jwt',
+      )
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document, {
+      customSiteTitle: 'MaraMap API Docs',
+      swaggerOptions: {
+        filter: true,
+        docExpansion: 'none',
+        persistAuthorization: true,
+      },
+    });
+  }
 
   await app.listen(process.env.PORT ?? 3000);
 }

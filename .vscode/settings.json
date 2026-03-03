@@ -6,9 +6,12 @@
     "SUPABASE"
   ],
   "github.copilot.chat.codeGeneration.instructions": [
-    { "file": ".github/copilot-instructions.md" }
+    { "file": "${workspaceFolder}/.github/copilot-instructions.md" }
   ],
   "github.copilot.chat.testGeneration.instructions": [
-    { "file": ".github/copilot-test-instructions.md" }
-  ]
+    { "file": "${workspaceFolder}/.github/copilot-test-instructions.md" }
+  ],
+  "chat.tools.terminal.autoApprove": {
+    "git commit": true
+  }
 }
