@@ -23,7 +23,10 @@ describe('AppController (e2e)', () => {
       })
       .overrideProvider(SupabaseStrategy)
       .useValue({
-        validate: jest.fn(() => ({ userId: 'test-user', email: 'test@example.com' })),
+        validate: jest.fn(() => ({
+          userId: 'test-user',
+          email: 'test@example.com',
+        })),
       })
       .compile();
 

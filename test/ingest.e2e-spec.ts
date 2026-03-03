@@ -25,15 +25,13 @@ describe('POST /api/v1/ingest (e2e)', () => {
             }),
             insert: jest.fn().mockReturnValue({
               select: jest.fn().mockReturnValue({
-                single: jest
-                  .fn()
-                  .mockImplementation(async () => {
-                    const id = `post-${Date.now()}-${Math.random()}`;
-                    return {
-                      data: { id },
-                      error: null,
-                    };
-                  }),
+                single: jest.fn().mockImplementation(async () => {
+                  const id = `post-${Date.now()}-${Math.random()}`;
+                  return {
+                    data: { id },
+                    error: null,
+                  };
+                }),
               }),
             }),
           };
@@ -63,7 +61,10 @@ describe('POST /api/v1/ingest (e2e)', () => {
       })
       .overrideProvider(SupabaseStrategy)
       .useValue({
-        validate: jest.fn(() => ({ userId: 'test-user', email: 'test@example.com' })),
+        validate: jest.fn(() => ({
+          userId: 'test-user',
+          email: 'test@example.com',
+        })),
       })
       .compile();
 
@@ -265,8 +266,7 @@ describe('POST /api/v1/ingest (e2e)', () => {
         .post('/api/v1/ingest')
         .send({
           source_id: 'fb_test_fragment',
-          original_url:
-            'https://facebook.com/post/123#section-title',
+          original_url: 'https://facebook.com/post/123#section-title',
           raw_text: 'Post with fragment',
         })
         .expect(202);
