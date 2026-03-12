@@ -5,7 +5,7 @@ import { AppService } from './app.service';
 import { HealthModule } from './health/health.module';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
-import { IngestModule } from './ingest/ingest.module';
+import { FbPostsModule } from './fb-posts/fb-posts.module';
 
 @Module({
   imports: [
@@ -13,9 +13,10 @@ import { IngestModule } from './ingest/ingest.module';
     HealthModule,
     SupabaseModule,
     AuthModule,
-    IngestModule,
+    FbPostsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
+
