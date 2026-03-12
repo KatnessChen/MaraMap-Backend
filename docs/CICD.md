@@ -66,10 +66,15 @@ This project uses GitHub Actions to automate testing and deployment. Two workflo
 
 At deploy time, these secrets are injected from GitHub Secrets (different for dev and prod):
 
-- `SUPABASE_URL` → `SUPABASE_URL_DEV` or `SUPABASE_URL_PROD`
-- `SUPABASE_SERVICE_ROLE_KEY` → `SUPABASE_KEY_DEV` or `SUPABASE_KEY_PROD`
-- `N8N_WEBHOOK_URL` (configured per environment)
-- `INTERNAL_API_SECRET` (configured per environment)
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `GEMINI_API_KEY`
+- `USER_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_ENDPOINT`
+- `R2_BUCKET_NAME`
+- `R2_PUBLIC_URL`
 
 ---
 
@@ -79,38 +84,24 @@ Set these in your GitHub repository settings (`Settings > Secrets and variables 
 
 ### GCP Deployment
 
-| Secret | Description | Example |
-|--------|-------------|---------|
-| `GCP_PROJECT_ID` | Your GCP project ID | `my-maramap-project` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Workload Identity Provider resource name | `projects/123456/locations/global/workloadIdentityPools/github-pool/providers/github` |
-
-### Supabase (Dev)
-
 | Secret | Description |
 |--------|-------------|
-| `SUPABASE_URL_DEV` | Supabase project URL (dev) |
-| `SUPABASE_KEY_DEV` | Supabase service-role key (dev) |
+| `GCP_PROJECT_ID` | Your GCP project ID |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Provider resource name |
 
-### Supabase (Production)
+### Application Secrets (Dev & Prod)
 
-| Secret | Description |
-|--------|-------------|
-| `SUPABASE_URL_PROD` | Supabase project URL (production) |
-| `SUPABASE_KEY_PROD` | Supabase service-role key (production) |
+Create these secrets with `_DEV` and `_PROD` suffixes (e.g., `GEMINI_API_KEY_DEV`):
 
-### n8n Webhooks
-
-| Secret | Description |
-|--------|-------------|
-| `N8N_WEBHOOK_URL_DEV` | n8n webhook trigger URL (dev) |
-| `N8N_WEBHOOK_URL_PROD` | n8n webhook trigger URL (production) |
-
-### API Security
-
-| Secret | Description |
-|--------|-------------|
-| `INTERNAL_API_SECRET_DEV` | Secret for n8n callbacks (dev) |
-| `INTERNAL_API_SECRET_PROD` | Secret for n8n callbacks (production) |
+- `SUPABASE_URL`
+- `SUPABASE_KEY` (Service role key)
+- `GEMINI_API_KEY`
+- `USER_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_ENDPOINT`
+- `R2_BUCKET_NAME`
+- `R2_PUBLIC_URL`
 
 ---
 

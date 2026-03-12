@@ -4,10 +4,10 @@
 
 MaraMap-Backend is a **NestJS** REST API that serves the MaraMap platform. It has two responsibilities:
 
-1. **Ingestion Gateway** — receives raw HTML/text from a Chrome Extension, persists it, and dispatches async jobs to Cloud Run Jobs via Cloud Tasks.
+1. **Ingestion Gateway** — receives Facebook data zip file exports from the frontend, parses the posts, persists them, and dispatches async jobs to n8n for AI processing.
 2. **Content API** — serves structured blog posts and geospatial map data to the Next.js frontend.
 
-> Keep the backend **lightweight and fast**. Delegate all heavy work (AI processing, image downloading) to Cloud Run Jobs.
+> Keep the backend **lightweight and fast**. Delegate all heavy work (AI processing, image downloading) to n8n.
 
 > For detailed project goals and specifications, refer to `/SPEC.md`.
 
@@ -46,7 +46,7 @@ All endpoints are prefixed with `/api/v1/`.
 
 | Route                  | Method | Description                                      |
 | ---------------------- | ------ | ------------------------------------------------ |
-| `/api/v1/ingest`       | POST   | Receive raw scrape payload from Chrome Extension |
+| `/api/v1/upload-facebook-data` | POST | Receive Facebook data zip upload from the frontend |
 | `/api/v1/posts`        | GET    | List published posts (pagination + filter)       |
 | `/api/v1/posts/:id`    | GET    | Single post by UUID                              |
 | `/api/v1/locations`    | GET    | Map markers (`id`, `title`, `location_geo` only) |
@@ -60,18 +60,7 @@ All endpoints are prefixed with `/api/v1/`.
 
 - **Success:** return the resource or a minimal acknowledgement object; do **not** wrap in a `{ data: ... }` envelope unless it's a paginated list.
 - **Paginated lists:** return `{ items: [...], total: number, page: number, limit: number }`.
-- **Ingestion endpoint** (`POST /api/v1/ingest`): always return **HTTP 202 Accepted** immediately after queuing — never block on Cloud Run Jobs processing.
 - **Errors:** use NestJS built-in HTTP exceptions so the response shape is consistent: `{ statusCode, message, error }`.
-
-### Ingestion Endpoint Behavior
-
-When handling `POST /api/v1/ingest`:
-
-1. Validate the DTO.
-2. Check `source_id` for idempotency — if the record already exists, return **409 Conflict**.
-3. Save the record to the `posts` table with `status = 'PENDING'`.
-4. Fire-and-forget: enqueue a Cloud Tasks job asynchronously (do **not** await the result before responding).
-5. Return **202 Accepted**.
 
 ---
 
@@ -99,7 +88,7 @@ user_id       UUID REFERENCES users(id) ON DELETE CASCADE
 source_id     TEXT UNIQUE NOT NULL   -- Facebook Post ID; used for idempotency
 title         TEXT
 content       JSONB                  -- Tiptap JSON format
-raw_text      TEXT
+raw_html      TEXT
 location_name TEXT
 location_geo  GEOGRAPHY(POINT)       -- PostGIS Lat/Lng
 published_at  TIMESTAMP WITH TIME ZONE
@@ -134,9 +123,6 @@ All required environment variables. Access via `ConfigService`, not `process.env
 | ------------------------- | ------------------------------------------------------- |
 | `SUPABASE_URL`            | Supabase project URL                                    |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key for admin access            |
-| `CLOUD_TASKS_QUEUE_NAME`  | Cloud Tasks queue name for async job processing         |
-| `CLOUD_TASKS_LOCATION`    | Cloud Tasks queue location (matches Cloud Run region)   |
-| `INTERNAL_API_SECRET`     | Secret used to authenticate callbacks from Cloud Run Jobs → backend |
 
 Never log or expose these values. Use `@nestjs/config` validation schema to enforce they are present at startup.
 
