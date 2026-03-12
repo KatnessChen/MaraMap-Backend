@@ -8,6 +8,9 @@ describe('FbPostsController', () => {
 
   const mockFbPostsService = {
     findAll: jest.fn(),
+    findOne: jest.fn(),
+    update: jest.fn(),
+    remove: jest.fn(),
     findLocations: jest.fn(),
     getCategories: jest.fn(),
   };
@@ -33,7 +36,8 @@ describe('FbPostsController', () => {
 
   describe('getPosts', () => {
     it('should call service.findAll with correct params', async () => {
-      await controller.getPosts(2, 5, '馬拉松', '2026-01-01', '2026-01-31', 'race', 'user-1');
+      // Note: query params come as strings from @Query, our controller converts them
+      await controller.getPosts(2, 5, '馬拉松', '2026-01-01', '2026-01-31', 'race', 'false', 'user-1');
       expect(service.findAll).toHaveBeenCalledWith(
         'user-1',
         2,
@@ -42,7 +46,30 @@ describe('FbPostsController', () => {
         '2026-01-01',
         '2026-01-31',
         'race',
+        false,
       );
+    });
+  });
+
+  describe('getPostById', () => {
+    it('should call service.findOne', async () => {
+      await controller.getPostById('post-123', 'user-1');
+      expect(service.findOne).toHaveBeenCalledWith('user-1', 'post-123');
+    });
+  });
+
+  describe('updatePost', () => {
+    it('should call service.update', async () => {
+      const updateDto = { title: 'Updated' };
+      await controller.updatePost('post-123', updateDto, 'user-1');
+      expect(service.update).toHaveBeenCalledWith('user-1', 'post-123', updateDto);
+    });
+  });
+
+  describe('deletePost', () => {
+    it('should call service.remove', async () => {
+      await controller.deletePost('post-123', 'user-1');
+      expect(service.remove).toHaveBeenCalledWith('user-1', 'post-123');
     });
   });
 
