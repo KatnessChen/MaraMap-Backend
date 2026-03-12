@@ -45,7 +45,7 @@ export class FbPostsService {
     if (category) query = query.eq('category', category);
     if (startDate) query = query.gte('event_date', startDate);
     if (endDate) query = query.lte('event_date', endDate);
-    
+
     if (search) {
       // Use case-insensitive partial match
       query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
@@ -57,7 +57,9 @@ export class FbPostsService {
       console.error('❌ Supabase Query Error:', error.message, error.details);
       // If the error is about missing column 'is_hidden', let's provide a clear hint
       if (error.message.includes('is_hidden')) {
-        throw new InternalServerErrorException('Database schema mismatch: Did you run the SQL to add "is_hidden" column?');
+        throw new InternalServerErrorException(
+          'Database schema mismatch: Did you run the SQL to add "is_hidden" column?',
+        );
       }
       throw new InternalServerErrorException(error.message);
     }
@@ -96,7 +98,8 @@ export class FbPostsService {
     if (category) query = query.eq('category', category);
     if (startDate) query = query.gte('event_date', startDate);
     if (endDate) query = query.lte('event_date', endDate);
-    if (search) query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
+    if (search)
+      query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
 
     const { data, error } = await query;
     if (error) {
@@ -104,9 +107,10 @@ export class FbPostsService {
       return [];
     }
 
-    return (data || []).filter(post => 
-      Array.isArray(post.media) && 
-      post.media.some(m => m.lat !== null && m.lng !== null)
+    return (data || []).filter(
+      (post) =>
+        Array.isArray(post.media) &&
+        post.media.some((m) => m.lat !== null && m.lng !== null),
     );
   }
 
@@ -131,7 +135,7 @@ export class FbPostsService {
       return acc;
     }, {});
 
-    return Object.keys(stats).map(name => ({ name, count: stats[name] }));
+    return Object.keys(stats).map((name) => ({ name, count: stats[name] }));
   }
 
   /**

@@ -37,7 +37,16 @@ describe('FbPostsController', () => {
   describe('getPosts', () => {
     it('should call service.findAll with correct params', async () => {
       // Note: query params come as strings from @Query, our controller converts them
-      await controller.getPosts(2, 5, '馬拉松', '2026-01-01', '2026-01-31', 'race', 'false', 'user-1');
+      await controller.getPosts(
+        2,
+        5,
+        '馬拉松',
+        '2026-01-01',
+        '2026-01-31',
+        'race',
+        'false',
+        'user-1',
+      );
       expect(service.findAll).toHaveBeenCalledWith(
         'user-1',
         2,
@@ -62,7 +71,11 @@ describe('FbPostsController', () => {
     it('should call service.update', async () => {
       const updateDto = { title: 'Updated' };
       await controller.updatePost('post-123', updateDto, 'user-1');
-      expect(service.update).toHaveBeenCalledWith('user-1', 'post-123', updateDto);
+      expect(service.update).toHaveBeenCalledWith(
+        'user-1',
+        'post-123',
+        updateDto,
+      );
     });
   });
 
@@ -75,7 +88,13 @@ describe('FbPostsController', () => {
 
   describe('getLocations', () => {
     it('should call service.findLocations', async () => {
-      await controller.getLocations('馬拉松', '2026-01-01', '2026-01-31', 'race', 'user-1');
+      await controller.getLocations(
+        '馬拉松',
+        '2026-01-01',
+        '2026-01-31',
+        'race',
+        'user-1',
+      );
       expect(service.findLocations).toHaveBeenCalledWith(
         'user-1',
         '馬拉松',

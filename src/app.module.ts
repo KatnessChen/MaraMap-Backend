@@ -19,4 +19,3 @@ import { FbPostsModule } from './fb-posts/fb-posts.module';
   providers: [AppService],
 })
 export class AppModule {}
-

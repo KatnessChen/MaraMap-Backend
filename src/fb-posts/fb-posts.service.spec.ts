@@ -4,7 +4,6 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 describe('FbPostsService', () => {
   let service: FbPostsService;
-  let supabaseService: SupabaseService;
 
   const mockSupabaseClient = {
     from: jest.fn().mockReturnThis(),
@@ -19,7 +18,7 @@ describe('FbPostsService', () => {
     single: jest.fn().mockReturnThis(),
     update: jest.fn().mockReturnThis(),
     // Make thenable to support await
-    then: jest.fn(function(resolve) {
+    then: jest.fn(function (resolve) {
       return resolve({ data: [], count: 0, error: null });
     }),
   };
@@ -38,7 +37,6 @@ describe('FbPostsService', () => {
     }).compile();
 
     service = module.get<FbPostsService>(FbPostsService);
-    supabaseService = module.get<SupabaseService>(SupabaseService);
   });
 
   it('should be defined', () => {
@@ -47,12 +45,20 @@ describe('FbPostsService', () => {
 
   describe('findAll', () => {
     it('should call supabase client with correct pagination and filters', async () => {
-      mockSupabaseClient.then.mockImplementationOnce((resolve) => 
-        resolve({ data: [], count: 0, error: null })
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], count: 0, error: null }),
       );
 
       const userId = 'user-123';
-      await service.findAll(userId, 1, 10, '馬拉松', '2026-01-01', '2026-03-01', 'race');
+      await service.findAll(
+        userId,
+        1,
+        10,
+        '馬拉松',
+        '2026-01-01',
+        '2026-03-01',
+        'race',
+      );
 
       expect(mockSupabaseClient.from).toHaveBeenCalledWith('fb_posts');
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('user_id', userId);
@@ -64,8 +70,8 @@ describe('FbPostsService', () => {
   describe('findOne', () => {
     it('should return a single post', async () => {
       const mockPost = { id: 'post-1', title: 'Test Post' };
-      mockSupabaseClient.then.mockImplementationOnce((resolve) => 
-        resolve({ data: mockPost, error: null })
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPost, error: null }),
       );
 
       const result = await service.findOne('user-123', 'post-1');
@@ -77,8 +83,8 @@ describe('FbPostsService', () => {
   describe('update', () => {
     it('should update a post', async () => {
       const updateDto = { title: 'New' };
-      mockSupabaseClient.then.mockImplementationOnce((resolve) => 
-        resolve({ data: { id: '1', ...updateDto }, error: null })
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: '1', ...updateDto }, error: null }),
       );
 
       const result = await service.update('user-123', '1', updateDto);
@@ -90,8 +96,8 @@ describe('FbPostsService', () => {
   describe('remove', () => {
     it('should delete a post', async () => {
       const mockDeleted = { id: 'post-1' };
-      mockSupabaseClient.then.mockImplementationOnce((resolve) => 
-        resolve({ data: mockDeleted, error: null })
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockDeleted, error: null }),
       );
 
       const result = await service.remove('user-123', 'post-1');
