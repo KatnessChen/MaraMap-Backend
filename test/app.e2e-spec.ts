@@ -5,6 +5,7 @@ import { AppModule } from './../src/app.module';
 import { SupabaseService } from '../src/supabase/supabase.service';
 import { SupabaseAuthGuard } from '../src/auth/guards/supabase-auth.guard';
 import { SupabaseStrategy } from '../src/auth/strategies/supabase.strategy';
+import { AuthService } from '../src/auth/auth.service';
 
 describe('AppController (e2e)', () => {
   let app: INestApplication;
@@ -16,6 +17,10 @@ describe('AppController (e2e)', () => {
       .overrideProvider(SupabaseService)
       .useValue({
         getClient: jest.fn().mockReturnValue({}),
+      })
+      .overrideProvider(AuthService)
+      .useValue({
+        login: jest.fn(),
       })
       .overrideGuard(SupabaseAuthGuard)
       .useValue({
