@@ -48,7 +48,6 @@ This project uses GitHub Actions to automate testing and deployment. Two workflo
 
 | Branch | Region | Service | Config |
 |--------|--------|---------|--------|
-| `develop` | `northamerica-northeast1` (Montreal) | `maramap-backend-dev` | Dev environment |
 | `main` | `asia-east1` (Taiwan) | `maramap-backend-prod` | Production environment |
 
 ### Steps
@@ -58,13 +57,13 @@ This project uses GitHub Actions to automate testing and deployment. Two workflo
 2. Setup gcloud CLI
 3. Configure Docker for Artifact Registry
 4. Build Docker image (tag: git SHA)
-5. Push image to Artifact Registry
+5. Push image to Artifact Registry (asia-east1)
 6. Deploy to Cloud Run with environment secrets
 ```
 
 ### Environment Variables Injected
 
-At deploy time, these secrets are injected from GitHub Secrets (different for dev and prod):
+At deploy time, secrets are injected from GitHub Secrets:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
@@ -82,19 +81,10 @@ At deploy time, these secrets are injected from GitHub Secrets (different for de
 
 Set these in your GitHub repository settings (`Settings > Secrets and variables > Actions`):
 
-### GCP Deployment
-
-| Secret | Description |
-|--------|-------------|
-| `GCP_PROJECT_ID` | Your GCP project ID |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Provider resource name |
-
-### Application Secrets (Dev & Prod)
-
-Create these secrets with `_DEV` and `_PROD` suffixes (e.g., `GEMINI_API_KEY_DEV`):
-
+- `GCP_PROJECT_ID`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `SUPABASE_URL`
-- `SUPABASE_KEY` (Service role key)
+- `SUPABASE_SERVICE_ROLE_KEY`
 - `GEMINI_API_KEY`
 - `USER_ID`
 - `R2_ACCESS_KEY_ID`

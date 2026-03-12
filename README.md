@@ -68,9 +68,11 @@ The `upload-to-r2.js` script handles media migration:
 
 ## Environments
 
-Each environment is separate:
-- **Dev** (Montreal) — for development and testing
-- **Production** (Taiwan) — for users in Asia
+## Infrastructure
+
+- **Region**: Taiwan (`asia-east1`) for optimal low-latency service to end users in Asia.
+- **Platform**: GCP Cloud Run + Supabase + Cloudflare R2.
+
 
 ## For Developers
 

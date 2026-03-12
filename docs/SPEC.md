@@ -9,9 +9,8 @@ This Nest.js application serves as the Content API for the MaraMap platform. Its
 
 **Design Philosophy:** The backend is a lean Content API. All heavy lifting (parsing raw data, AI analysis, media migration) happens via controlled local scripts before the data reaches the production API.
 
-**Environments:** 
-- **Dev:** Runs in **Eastern Canada** (Montreal) for development and debugging.
-- **Production:** Runs in **Taiwan** (GCP asia-east1) for optimal low-latency service to end users in Asia.
+**Environment:** 
+- **Production:** Runs in **Taiwan** (GCP asia-east1) for optimal low-latency service to end users.
 
 ---
 

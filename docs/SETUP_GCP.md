@@ -57,17 +57,9 @@ Wait 1–2 minutes for APIs to be enabled.
 
 ---
 
-## Step 3: Create Artifact Registry Repositories
+## Step 3: Create Artifact Registry Repository
 
-One repository per region (same name, different locations).
-
-**Dev (Montreal – northamerica-northeast1):**
-```bash
-gcloud artifacts repositories create maramap-backend \
-  --repository-format=docker \
-  --location=northamerica-northeast1 \
-  --description="Docker images for MaraMap Backend"
-```
+Create a repository in the Taiwan region.
 
 **Production (Taiwan – asia-east1):**
 ```bash
