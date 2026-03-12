@@ -2,187 +2,108 @@
 
 ## 1. Module Overview
 
-This Nest.js application serves as the central nervous system for the MaraMap platform. It operates with two primary responsibilities:
+This Nest.js application serves as the Content API for the MaraMap platform. Its primary responsibilities are:
 
-- **The Ingestion Gateway:** Receiving raw, unstructured data from the Chrome Extension scraper, persisting it safely, and dispatching processing jobs to the n8n AI worker asynchronously.
-- **The Content API:** Serving structured, polished blog posts and geospatial map data to the Next.js frontend.
+- **The Content API:** Serving structured, AI-classified blog posts and geotagged map data to the Next.js frontend.
+- **Data Ingestion (Script-based):** Handling data extraction, AI classification, and cloud storage migration via local scripts for maximum efficiency and cost control.
 
-**Design Philosophy:** The backend must remain lightweight and fast. Heavy computational tasks, such as AI processing and image downloading, are strictly delegated to the n8n worker.
+**Design Philosophy:** The backend is a lean Content API. All heavy lifting (parsing raw data, AI analysis, media migration) happens via controlled local scripts before the data reaches the production API.
 
-**Environments (from day one):** The project uses exactly two environments. **Dev** runs in **Eastern Canada** (GCP northamerica-northeast1/2) for low-latency development and debugging. **Production** runs in **Taiwan** (GCP asia-east1) for end users. All infrastructure, config, and CI/CD are set up for these two environments from the start.
-
----
-
-## 2. Core API Endpoints
-
-### 2.1 Ingestion API (Extension → Backend)
-
-Receives raw HTML/text from the Chrome Extension.
-
-| Property           | Value                             |
-| ------------------ | --------------------------------- |
-| **Endpoint**       | `POST /api/v1/ingest`             |
-| **Authentication** | Bearer Token (Admin/User API Key) |
-
-**Behavior:**
-
-1. Validates the incoming payload.
-2. Performs an idempotency check (`source_id`) to prevent duplicate scrapes.
-3. Saves the record to the database with a `PENDING` status.
-4. Triggers the internal n8n webhook asynchronously.
-5. Immediately returns **202 Accepted**.
-
-### 2.2 Content API (Backend → Next.js Frontend)
-
-Serves the published content to the reader-facing blog and map interfaces.
-
-| Endpoint    | Method                  | Description                                                                  |
-| ----------- | ----------------------- | ---------------------------------------------------------------------------- |
-| Blog List   | `GET /api/v1/posts`     | Supports pagination and filtering by `PUBLISHED` status.                     |
-| Post Detail | `GET /api/v1/posts/:id` | Single post by ID.                                                           |
-| Map Markers | `GET /api/v1/locations` | Returns only `id`, `title`, and `location_geo` for efficient map clustering. |
+**Environments:** 
+- **Dev:** Runs in **Eastern Canada** (Montreal) for development and debugging.
+- **Production:** Runs in **Taiwan** (GCP asia-east1) for optimal low-latency service to end users in Asia.
 
 ---
 
-## 3. Supabase Database Setup Guide
+## 2. Core API Endpoints (api/v1)
 
-We will use managed Supabase as our PostgreSQL database provider to handle relational data, PostGIS geospatial coordinates, and image storage. Create **two Supabase projects**: one for **dev** (region preferred near Eastern Canada if available, otherwise any; used only by the dev environment) and one for **production** (Asia region for Taiwan users).
+### 2.1 Post & Map API
 
-### Step 1: Initialize the Project
+Serves the processed content to the frontend map and list interfaces.
 
-1. Create **two** projects in the [Supabase Dashboard](https://supabase.com/dashboard)—one for **dev**, one for **production**.
-2. For each project (dev and production), navigate to the **SQL Editor**.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `GET /posts` | GET | Paginated posts. Supports filters: `category`, `startDate`, `endDate`, `search`. |
+| `GET /locations` | GET | All geotagged posts for map pins. Supports same filters as `/posts`. |
+| `GET /categories` | GET | Returns unique categories (e.g., 馬拉松, 旅遊) and their counts. |
 
-### Step 2: Enable Geospatial Support (PostGIS)
+### 2.2 Parameters
 
-Enable PostGIS for map support. Run the following in the SQL Editor **for both dev and production projects**:
+- `page`: Page number (default: 1)
+- `limit`: Items per page (default: 10)
+- `category`: Filter by AI category (Traditional Chinese)
+- `startDate` / `endDate`: Date range filter (YYYY-MM-DD)
+- `search`: Keyword search in title or content (case-insensitive)
+
+---
+
+## 3. Data Ingestion Workflow
+
+Instead of an upload API, we use specialized scripts in the `scripts/` directory:
+
+1.  **Extraction (`extract-fb-data.js`)**: Parses raw Facebook JSON exports, fixes encoding (mojibake), and extracts text + media metadata.
+2.  **AI Classification (`ai-classify.js`)**: Uses Gemini 2.5 Flash to categorize posts into Chinese categories (馬拉松, 旅遊, 跑步訓練, 日常生活) and generate tags.
+3.  **Cloud Migration (`upload-to-r2.js`)**: Efficiently uploads local images/videos to Cloudflare R2 in parallel and updates the database with CDN URLs.
+4.  **Database Import (`import-to-supabase.js`)**: Performs an `upsert` to Supabase to keep the production data in sync.
+
+---
+
+## 4. Database Schema (Supabase / PostgreSQL)
+
+The core data is stored in the `fb_posts` table:
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS postgis;
-```
-
-### Step 3: Define the Schema
-
-Execute the following SQL script in **both** dev and production Supabase projects to create the multi-tenant schema:
-
-```sql
--- Create Users Table
-CREATE TABLE users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  email TEXT UNIQUE NOT NULL,
-  plan_tier TEXT DEFAULT 'FREE',
-  config JSONB DEFAULT '{"enable_map": false}'::jsonb,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+CREATE TABLE fb_posts (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  fb_timestamp bigint NOT NULL,
+  event_date date NOT NULL,
+  title text,
+  content text,
+  category varchar(50),
+  tags jsonb DEFAULT '[]'::jsonb,
+  media jsonb DEFAULT '[]'::jsonb,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE (user_id, fb_timestamp)
 );
 
--- Create Posts Table
-CREATE TABLE posts (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-  source_id TEXT UNIQUE NOT NULL,  -- Facebook Post ID
-  title TEXT,
-  content JSONB,                   -- Tiptap JSON format
-  raw_text TEXT,
-  location_name TEXT,
-  location_geo GEOGRAPHY(POINT),   -- Stores Lat/Lng
-  published_at TIMESTAMP WITH TIME ZONE,
-  status TEXT DEFAULT 'PENDING',   -- PENDING, PUBLISHED, HIDDEN
-  meta JSONB,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Index for map queries
-CREATE INDEX posts_geo_index ON posts USING GIST (location_geo);
+CREATE INDEX idx_fb_posts_user_id ON fb_posts (user_id);
+CREATE INDEX idx_fb_posts_date ON fb_posts (event_date DESC);
 ```
 
-### Step 4: Configure Storage for Images
-
-In **both** dev and production Supabase projects:
-
-1. Navigate to **Storage** in the Supabase Dashboard.
-2. Create a new bucket named **social-images**.
-3. Set the bucket to **Public** so the Next.js frontend can render the images directly.
+### Media JSONB Structure:
+```json
+[
+  {
+    "uri": "https://maramap-assets.vizino.ai/...",
+    "type": "photo | video",
+    "lat": 25.077,
+    "lng": 121.508,
+    "taken_at": 1772933523
+  }
+]
+```
 
 ---
 
-## 4. Google Cloud Platform (GCP) Deployment Strategy
+## 5. Storage Strategy (Cloudflare R2)
 
-For a 24/7 robust cloud environment, we containerize the Nest.js application using Docker and deploy it to Google Cloud. We deploy **two Cloud Run services** from the start:
-
-- **Dev:** region **northamerica-northeast1** (Montreal)—Eastern Canada, for the development team.
-- **Production:** region **asia-east1** (Taiwan)—for end users.
-
-### Recommended Compute Option: Google Cloud Run
-
-While a Compute Engine VM is an option, **Cloud Run** is the ideal choice for this stateless API.
-
-- **Cost-Effective:** It scales automatically based on traffic. To ensure 24/7 responsiveness without "cold start" delays, we can set `min-instances=1` per environment.
-- **Zero Server Maintenance:** OS patching and networking are fully managed by GCP.
-- **Containerized Workflow:** We build the Nest.js Docker image once, push to Artifact Registry (multi-region or per-region), and deploy to **dev** (East Canada) and **production** (Taiwan) separately.
-
-### Environment Variables Required in GCP
-
-Each Cloud Run service (dev and production) has its own configuration. The following secrets must be injected per environment (different values for dev vs production):
-
-| Variable                    | Description                                                        |
-| --------------------------- | ------------------------------------------------------------------ |
-| `SUPABASE_URL`              | The project URL.                                                   |
-| `SUPABASE_SERVICE_ROLE_KEY` | For backend admin access (bypassing RLS).                          |
-| `N8N_WEBHOOK_URL`           | The trigger URL for our AI agent.                                  |
-| `INTERNAL_API_SECRET`       | To secure the endpoint that n8n calls when updating post statuses. |
+- **Platform:** Cloudflare R2 (S3-compatible).
+- **Domain:** `https://maramap-assets.vizino.ai` (Managed by Cloudflare CDN).
+- **Latency Optimization:** Uses Cloudflare's global edge network to cache assets in Taiwan, minimizing cross-Pacific latency from Ottawa.
+- **Cost:** $0 Egress fees when accessed via the custom domain.
 
 ---
 
-## 5. Multi-Region Strategy: Dev (Eastern Canada) vs Production (Taiwan)
-
-The development team is in Eastern Canada; end users are in Taiwan. Resources are split into two environments from the start: **dev** (East Canada) and **production** (Taiwan).
-
-### 5.1 Principles
-
-| Concern                  | Strategy                                                                                            |
-| ------------------------ | --------------------------------------------------------------------------------------------------- |
-| **User experience**      | Production API, frontend, and DB are in Taiwan/Asia to minimize latency.                            |
-| **Developer experience** | Dev environment, CI/CD, logs, and debugging are in Eastern Canada for fast iteration.               |
-| **Cost**                 | Production in a single region (Asia); dev in a single region (East Canada); add CDN only if needed. |
-
-### 5.2 Region Overview
-
-| Resource                                | Production                                                                                      | Dev                                                                                             |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| **Nest.js API (Cloud Run)**             | **asia-east1** (Taiwan)                                                                         | **northamerica-northeast1** (Montreal) or **northamerica-northeast2** (Toronto)                 |
-| **Supabase (DB + Storage)**             | Asia (e.g. Singapore / East Asia per Supabase options)                                          | Separate dev project; region near East Canada if available, otherwise same schema in any region |
-| **Container image (Artifact Registry)** | Same image; push to **asia-east1** and **northamerica-northeast1** (multi-region or per-region) | Same as production                                                                              |
-| **n8n workflows**                       | Same region as production API (Asia) to keep webhook latency low                                | East Canada, connected to dev API                                                               |
-| **Next.js frontend**                    | **Taiwan / East Asia** (e.g. Vercel); if on GCP, use **asia-east1**                             | East Canada or same as production for testing                                                   |
-
-### 5.3 Supabase Regions
-
-- **Production:** Create the production Supabase project in **Asia** (e.g. Singapore / Tokyo). Taiwan users get the lowest DB latency; the dev team may connect for admin/debug with higher but acceptable latency.
-- **Dev:** Create a separate **dev** Supabase project. Prefer a region near Eastern Canada if Supabase offers it; otherwise use the same schema in any region. Never use the production DB for day-to-day dev.
-
-### 5.4 CI/CD and Operations
-
-- **CI/CD (e.g. GitHub Actions):**
-  - Build the Docker image once and push to Artifact Registry (multi-region or separate asia / northamerica).
-  - Deploy **dev** to **northamerica-northeast1**; deploy **production** to **asia-east1**.
-- **Logging and monitoring:** Use Cloud Logging / Cloud Monitoring and filter by **region**. The team inspects both dev (East Canada) and production (Asia) services.
-- **Environment variables:** Dev and production use different `SUPABASE_URL`, `N8N_WEBHOOK_URL`, etc., pointing to each environment’s Supabase and n8n.
-
-### 5.5 Architecture Overview
+## 6. Architecture Overview
 
 ```
-[End users — Taiwan]
-     │
-     ▼
-Next.js (Asia) ──► Nest.js API (asia-east1) ──► Supabase (production, Asia)
-                         │
-                         └──► n8n (Asia)  // async processing
-
-[Dev team — Eastern Canada]
-     │
-     ▼
-CI/CD ──► build image ──► Artifact Registry (multi-region or per-region)
-                │
-                ├──► Cloud Run dev (Montreal)
-                └──► Cloud Run production (Taiwan)
+[Taiwan Client] <───> [Cloudflare CDN / R2] (Media Cache)
+      │
+      ▼
+[GCP Cloud Run (Taiwan)] <───> [Supabase (Asia)] (Metadata)
+      │
+      │ (Local Ingestion from Ottawa)
+      ▼
+[Specialized Scripts] ──► [Gemini AI] (Classification)
 ```

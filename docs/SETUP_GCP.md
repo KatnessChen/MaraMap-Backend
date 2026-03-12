@@ -134,21 +134,30 @@ Application credentials are stored in Secret Manager and injected into Cloud Run
 
 ```bash
 # Create each secret (you will be prompted to paste the value)
-echo -n "YOUR_SUPABASE_URL" | \
-  gcloud secrets create supabase_url \
-    --data-file=- \
-    --replication-policy=automatic
+secrets=(
+  "supabase_url"
+  "supabase_service_role_key"
+  "gemini_api_key"
+  "user_id"
+  "r2_access_key_id"
+  "r2_secret_access_key"
+  "r2_endpoint"
+  "r2_bucket_name"
+  "r2_public_url"
+)
 
-echo -n "YOUR_SUPABASE_SERVICE_ROLE_KEY" | \
-  gcloud secrets create supabase_service_role_key \
-    --data-file=- \
-    --replication-policy=automatic
+for secret in "${secrets[@]}"; do
+  echo -n "Paste value for $secret: "
+  read -s value
+  echo -n "$value" | gcloud secrets create "$secret" --data-file=- --replication-policy=automatic
+  echo ""
+done
 ```
 
 Grant the service account read access to each secret:
 ```bash
-for SECRET in supabase_url supabase_service_role_key; do
-  gcloud secrets add-iam-policy-binding $SECRET \
+for secret in "${secrets[@]}"; do
+  gcloud secrets add-iam-policy-binding "$secret" \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/secretmanager.secretAccessor"
 done
