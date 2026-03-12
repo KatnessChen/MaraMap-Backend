@@ -1,5 +1,55 @@
 # GitHub Actions CI/CD Setup
 
+## ⚠️ Pre-Push Testing Requirements
+
+**Before pushing code to `develop` or `main` branches, you MUST run all tests locally to ensure nothing breaks in CI/CD.**
+
+### Local Test Checklist (Before Every Push)
+
+Run these commands in order:
+
+```bash
+# 1. Install dependencies
+pnpm install
+
+# 2. Run linter (fix formatting, catch unused imports)
+pnpm run lint
+
+# 3. Run unit + integration tests
+pnpm run test
+
+# 4. Run e2e tests  
+pnpm run test:e2e
+
+# 5. Check code coverage (must meet thresholds)
+pnpm run test:cov
+
+# 6. Build TypeScript (catch type errors)
+pnpm run build
+```
+
+### All Tests Must Pass ✅
+
+- **Linter**: No ESLint errors
+- **Unit Tests**: All tests pass
+- **E2E Tests**: All tests pass
+- **Coverage**: Branches ≥ 30%, Functions ≥ 60%, Statements ≥ 60%, Lines ≥ 60%
+- **Build**: TypeScript compiles without errors
+
+**If any test fails, do NOT push.** Fix the issue locally first.
+
+### Quick Script
+
+Add to your shell profile to make pre-push checking easier:
+
+```bash
+alias pre-push='pnpm run lint && pnpm run test && pnpm run test:e2e && pnpm run test:cov && pnpm run build && echo "✅ All checks passed!"'
+```
+
+Then run: `pre-push` before pushing.
+
+---
+
 ## Overview
 
 This project uses GitHub Actions to automate testing and deployment. Two workflows work together:
