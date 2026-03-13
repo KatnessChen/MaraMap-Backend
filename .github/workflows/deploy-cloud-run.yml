@@ -5,7 +5,8 @@ on:
     workflows: [Test]
     types: [completed]
     branches:
-      - main # Only deploy from main branch
+      - main
+      - develop
 
 permissions:
   contents: 'read'
@@ -16,8 +17,9 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
-      REGION: asia-east1
-      SERVICE_NAME: maramap-backend-prod
+      # Logic to switch regions and names based on branch
+      REGION: ${{ github.event.workflow_run.head_branch == 'main' && 'asia-east1' || 'northamerica-northeast1' }}
+      SERVICE_NAME: ${{ github.event.workflow_run.head_branch == 'main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
     steps:
       - uses: actions/checkout@v4
         with:
