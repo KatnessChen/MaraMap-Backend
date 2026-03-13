@@ -37,12 +37,25 @@ export class FbPostsService {
       .range(offset, offset + l - 1);
 
     // Only filter by is_hidden if we are NOT showing hidden posts
-    // Note: If you haven't run the SQL to add this column yet, this will fail.
-    if (!showHidden) {
-      query = query.eq('is_hidden', false);
+    try {
+      if (!showHidden) {
+        query = query.eq('is_hidden', false);
+      }
+    } catch (e) {
+      console.warn('⚠️ is_hidden column missing in DB');
     }
 
-    if (category) query = query.eq('category', category);
+    if (category) {
+      // Support both localized and original category names
+      const categoryMap = {
+        '馬拉松': 'marathon',
+        '旅遊': 'travel',
+        '跑步訓練': 'training',
+        '日常生活': 'daily'
+      };
+      const dbCategory = categoryMap[category] || category;
+      query = query.or(`category.eq.${category},category.eq.${dbCategory}`);
+    }
     if (startDate) query = query.gte('event_date', startDate);
     if (endDate) query = query.lte('event_date', endDate);
 
