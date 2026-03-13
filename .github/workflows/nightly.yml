@@ -1,0 +1,193 @@
+name: Nightly Test & Coverage Check
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # 07:00 UTC = 02:00 Ottawa (EST, UTC-5)
+  workflow_dispatch:      # Allow manual trigger from Actions tab
+
+jobs:
+  nightly-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      issues: write        # Required to create GitHub Issues
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run unit tests
+        id: unit
+        run: pnpm test
+        continue-on-error: true
+
+      - name: Run e2e tests
+        id: e2e
+        run: pnpm test:e2e
+        continue-on-error: true
+
+      - name: Run coverage check
+        id: coverage
+        run: pnpm test:cov
+        continue-on-error: true
+
+      - name: Publish unit test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: '[Nightly] Unit Tests'
+          path: test-results/unit/junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      - name: Publish e2e test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: '[Nightly] E2E Tests'
+          path: test-results/e2e/junit.xml
+          reporter: jest-junit
+          fail-on-error: false
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-coverage-report
+          path: coverage/
+          retention-days: 30
+
+      - name: Parse coverage summary
+        id: parse-coverage
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            LINES=$(node -e "const s=require('./coverage/coverage-summary.json').total; console.log(s.lines.pct)")
+            FUNCTIONS=$(node -e "const s=require('./coverage/coverage-summary.json').total; console.log(s.functions.pct)")
+            BRANCHES=$(node -e "const s=require('./coverage/coverage-summary.json').total; console.log(s.branches.pct)")
+            STATEMENTS=$(node -e "const s=require('./coverage/coverage-summary.json').total; console.log(s.statements.pct)")
+            echo "lines=$LINES" >> $GITHUB_OUTPUT
+            echo "functions=$FUNCTIONS" >> $GITHUB_OUTPUT
+            echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
+            echo "statements=$STATEMENTS" >> $GITHUB_OUTPUT
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Issue on failure
+        if: |
+          always() &&
+          (steps.unit.outcome == 'failure' || steps.e2e.outcome == 'failure' || steps.coverage.outcome == 'failure')
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            // Check for an existing open nightly issue to avoid duplicates
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'nightly-failure',
+              state: 'open',
+            });
+
+            if (existing.data.length > 0) {
+              // Add a comment to the existing issue instead of opening a new one
+              const issueNumber = existing.data[0].number;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: [
+                  `### Nightly run failed again — ${today}`,
+                  '',
+                  `| Step | Result |`,
+                  `|------|--------|`,
+                  `| Unit Tests | ${'${{ steps.unit.outcome }}' === 'failure' ? '❌ Failed' : '✅ Passed'} |`,
+                  `| E2E Tests | ${'${{ steps.e2e.outcome }}' === 'failure' ? '❌ Failed' : '✅ Passed'} |`,
+                  `| Coverage | ${'${{ steps.coverage.outcome }}' === 'failure' ? '❌ Below threshold' : '✅ Passed'} |`,
+                  '',
+                  `[View run](${runUrl})`,
+                ].join('\n'),
+              });
+              console.log(`Commented on existing issue #${issueNumber}`);
+              return;
+            }
+
+            const coverageAvailable = '${{ steps.parse-coverage.outputs.available }}' === 'true';
+            const coverageBlock = coverageAvailable ? [
+              '',
+              '### Coverage Summary',
+              '',
+              '| Metric | Current | Threshold |',
+              '|--------|---------|-----------|',
+              `| Lines | ${{ steps.parse-coverage.outputs.lines }}% | 80% |`,
+              `| Functions | ${{ steps.parse-coverage.outputs.functions }}% | 80% |`,
+              `| Branches | ${{ steps.parse-coverage.outputs.branches }}% | 75% |`,
+              `| Statements | ${{ steps.parse-coverage.outputs.statements }}% | 80% |`,
+            ].join('\n') : '';
+
+            const body = [
+              `## 🔴 Nightly Test Failure — ${today}`,
+              '',
+              '> Automatically created by the nightly workflow. Close this issue when all tests are green.',
+              '',
+              '### Failed Steps',
+              '',
+              '| Step | Result |',
+              '|------|--------|',
+              `| Unit Tests | ${'${{ steps.unit.outcome }}' === 'failure' ? '❌ Failed' : '✅ Passed'} |`,
+              `| E2E Tests | ${'${{ steps.e2e.outcome }}' === 'failure' ? '❌ Failed' : '✅ Passed'} |`,
+              `| Coverage | ${'${{ steps.coverage.outcome }}' === 'failure' ? '❌ Below threshold' : '✅ Passed'} |`,
+              coverageBlock,
+              '',
+              `### Links`,
+              `- [View full run](${runUrl})`,
+              `- [Download coverage report](${runUrl}#artifacts)`,
+              '',
+              '### Resolution Checklist',
+              '- [ ] Identify failing tests from the run log',
+              '- [ ] Fix failing tests or the source code causing failures',
+              '- [ ] Ensure coverage meets thresholds (`pnpm test:cov` locally)',
+              '- [ ] Push a fix to `develop` and verify CI passes',
+              '- [ ] Close this issue once the next nightly run is green',
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🔴 Nightly test failure — ${today}`,
+              body,
+              labels: ['nightly-failure', 'testing'],
+            });
+            console.log('Created new nightly failure issue.');

@@ -1,99 +1,92 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# 🗺️ MaraMap Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+The backend API for MaraMap — a platform that turns social media content into an interactive map experience.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## What is MaraMap?
 
-## Description
+MaraMap connects content from social media (like Facebook and Instagram) to geographic locations. When you share a story with a location, it appears on a map where others can discover it.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+The backend handles:
+- **Content API** — delivers processed posts and map data to the web and mobile frontends.
+- **Data Ingestion** — handled via local processing scripts that extract and classify Facebook export data.
 
-## Project setup
+## Data Processing Workflow
 
-```bash
-$ npm install
-```
+Instead of uploading zip files via API, we use local scripts for efficiency and cost control:
 
-## Compile and run the project
+1. **Extraction**: `node scripts/extract-fb-data.js` - Extracts text and media (with GPS) from Facebook JSON exports.
+2. **Classification**: `node scripts/ai-classify.js` - Uses Gemini AI (2.5 Flash) to categorize posts (marathon, travel, etc.) and generate tags.
+3. **Upload Media**: `node scripts/upload-to-r2.js` - Uploads images and videos to Cloudflare R2 in parallel, updates database records with CDN URLs.
+4. **Import**: `node scripts/import-to-supabase.js` - Pushes the final structured data into Supabase `fb_posts` table.
+
+## Core Endpoints
+
+| What | Endpoint | Purpose |
+|------|----------|---------|
+| **Browse posts** | `GET /api/v1/posts` | Get published posts with pagination |
+| **Find locations** | `GET /api/v1/locations` | Get all geotagged content for the map |
+| **Read post** | `GET /api/v1/posts/:id` | View a single post by ID |
+
+## Getting Started
 
 ```bash
-# development
-$ npm run start
+# Install dependencies
+$ pnpm install
 
-# watch mode
-$ npm run start:dev
+# Start development server
+$ pnpm start:dev
 
-# production mode
-$ npm run start:prod
+# Run Data Import (Requires GEMINI_API_KEY and SUPABASE keys in .env)
+$ node scripts/extract-fb-data.js
+$ node scripts/ai-classify.js
+$ node scripts/upload-to-r2.js       # Upload images/videos to Cloudflare R2
+$ node scripts/import-to-supabase.js
 ```
 
-## Run tests
+## How It Works
+
+1. **Local Scripts** process the raw Facebook export folder.
+2. **Gemini AI** performs high-quality classification and tagging.
+3. **Cloudflare R2** stores all media assets (images, videos) with public CDN URLs.
+4. **Supabase** stores the structured post data, including media references and geographic coordinates.
+5. **Frontend** consumes the API to display posts on an interactive map.
+
+### Media Upload to Cloudflare R2
+
+The `upload-to-r2.js` script handles media migration:
+
+- **Parallel Uploads**: Uploads up to 20 files simultaneously for speed
+- **Deduplication**: Caches local file URIs to skip redundant uploads
+- **Format Support**: Handles JPEG, PNG, WebP, MP4, MOV, and other common formats
+- **CDN URLs**: Updates Supabase records with public Cloudflare CDN URLs after upload
+
+**Requirements**:
+- `R2_ENDPOINT`: Cloudflare R2 endpoint (e.g., `https://<account-id>.r2.cloudflarestorage.com`)
+- `R2_ACCESS_KEY_ID` & `R2_SECRET_ACCESS_KEY`: R2 API credentials
+- `R2_BUCKET_NAME`: Target bucket name in R2
+- `R2_PUBLIC_URL`: Public CDN URL for the bucket
+
+## Environments
+
+## Infrastructure
+
+- **Region**: Taiwan (`asia-east1`) for optimal low-latency service to end users in Asia.
+- **Platform**: GCP Cloud Run + Supabase + Cloudflare R2.
+
+
+## For Developers
+
+For API specifications, database schema, and deployment details, see [SPEC.md](./SPEC.md).
+
+### Testing
 
 ```bash
-# unit tests
-$ npm run test
+# Run tests
+$ pnpm test
 
-# e2e tests
-$ npm run test:e2e
+# Coverage report
+$ pnpm test:cov
 
-# test coverage
-$ npm run test:cov
+# End-to-end tests
+$ pnpm test:e2e
 ```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).

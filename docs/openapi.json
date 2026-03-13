@@ -1,0 +1,116 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "MaraMap API",
+    "description": "MaraMap Backend API — Content endpoints for social media map experience",
+    "version": "1.0"
+  },
+  "paths": {
+    "/api/v1/posts": {
+      "get": {
+        "tags": ["fb-posts"],
+        "summary": "Get paginated Facebook posts",
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } },
+          { "name": "category", "in": "query", "schema": { "type": "string" }, "description": "馬拉松, 旅遊, 跑步訓練, 日常生活" },
+          { "name": "startDate", "in": "query", "schema": { "type": "string" }, "description": "YYYY-MM-DD" },
+          { "name": "endDate", "in": "query", "schema": { "type": "string" }, "description": "YYYY-MM-DD" },
+          { "name": "search", "in": "query", "schema": { "type": "string" }, "description": "Keyword search" },
+          { "name": "user_id", "in": "query", "schema": { "type": "string" }, "description": "UUID of the user" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of posts",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaginatedPosts" } } }
+          }
+        }
+      }
+    },
+    "/api/v1/locations": {
+      "get": {
+        "tags": ["fb-posts"],
+        "summary": "Get geotagged content for the map",
+        "parameters": [
+          { "name": "category", "in": "query", "schema": { "type": "string" } },
+          { "name": "startDate", "in": "query", "schema": { "type": "string" } },
+          { "name": "endDate", "in": "query", "schema": { "type": "string" } },
+          { "name": "search", "in": "query", "schema": { "type": "string" } },
+          { "name": "user_id", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of posts with GPS coordinates",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/LocationPost" } } } }
+          }
+        }
+      }
+    },
+    "/api/v1/categories": {
+      "get": {
+        "tags": ["fb-posts"],
+        "summary": "Get unique categories and their counts",
+        "parameters": [
+          { "name": "user_id", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of categories with counts",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/CategoryInfo" } } } }
+          }
+        }
+      }
+    },
+    "/health-check": {
+      "get": {
+        "summary": "Health check",
+        "responses": { "200": { "description": "Service healthy" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PaginatedPosts": {
+        "type": "object",
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/FbPost" } },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "total": { "type": "integer" },
+              "page": { "type": "integer" },
+              "last_page": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "FbPost": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "event_date": { "type": "string" },
+          "title": { "type": "string" },
+          "content": { "type": "string" },
+          "category": { "type": "string" },
+          "media": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "LocationPost": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "category": { "type": "string" },
+          "media": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "CategoryInfo": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "count": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

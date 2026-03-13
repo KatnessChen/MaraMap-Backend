@@ -1,21 +1,32 @@
 name: Deploy to Cloud Run
 
 on:
-  push:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
     branches:
-      - develop  # Deploy to dev (Montreal)
-      - main     # Deploy to production (Taiwan)
+      - main
+      - develop
+
+permissions:
+  contents: 'read'
+  id-token: 'write'
 
 jobs:
   deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     env:
-      REGION: ${{ github.ref == 'refs/heads/main' && 'asia-east1' || 'northamerica-northeast1' }}
-      SERVICE_NAME: ${{ github.ref == 'refs/heads/main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
+      # Logic to switch regions and names based on branch
+      REGION: ${{ github.event.workflow_run.head_branch == 'main' && 'asia-east1' || 'northamerica-northeast1' }}
+      SERVICE_NAME: ${{ github.event.workflow_run.head_branch == 'main' && 'maramap-backend-prod' || 'maramap-backend-dev' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
-      - uses: google-github-actions/auth@v2
+      - id: auth
+        uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: 'github-actions-deploy@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com'
@@ -31,7 +42,7 @@ jobs:
       - name: Build and push Docker image
         id: build
         run: |
-          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/maramap-backend/maramap-backend:${{ github.sha }}"
+          IMAGE="${{ env.REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/maramap-backend/maramap-backend:${{ github.event.workflow_run.head_sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
@@ -43,4 +54,4 @@ jobs:
             --region ${{ env.REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --set-secrets="SUPABASE_URL=supabase_url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase_service_role_key:latest"
+            --set-secrets="SUPABASE_URL=supabase_url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase_service_role_key:latest,GEMINI_API_KEY=gemini_api_key:latest,USER_ID=user_id:latest,R2_ACCESS_KEY_ID=r2_access_key_id:latest,R2_SECRET_ACCESS_KEY=r2_secret_access_key:latest,R2_ENDPOINT=r2_endpoint:latest,R2_BUCKET_NAME=r2_bucket_name:latest,R2_PUBLIC_URL=r2_public_url:latest"
