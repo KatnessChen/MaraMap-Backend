@@ -7,16 +7,23 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    // Allow frontend and local dev origins
+    // Allow frontend, local dev, and environment-specified origins
     origin: (origin, callback) => {
+      const allowedOrigins = [
+        'http://localhost',
+        'http://127.0.0.1',
+        process.env.CORS_ORIGIN,
+      ].filter(Boolean);
+
       if (
         !origin ||
-        origin.startsWith('http://localhost') ||
-        origin.startsWith('http://127.0.0.1')
+        process.env.CORS_ORIGIN === '*' ||
+        allowedOrigins.some((ao) => origin.startsWith(ao as string))
       ) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS blocked: ${origin}`));
+        console.warn(`⚠️ CORS blocked for origin: ${origin}`);
+        callback(new Error(`CORS blocked by server configuration`));
       }
     },
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
