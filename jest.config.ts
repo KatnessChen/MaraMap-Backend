@@ -30,7 +30,7 @@ const config: Config = {
     [
       'jest-html-reporters',
       {
-        publicPath: './test-report/unit',
+        publicPath: '<rootDir>/../test-report/unit',
         filename: 'index.html',
         openReport: false,
         pageTitle: 'MaraMap Unit Test Report',
@@ -39,7 +39,7 @@ const config: Config = {
     [
       'jest-junit',
       {
-        outputDirectory: './test-results/unit',
+        outputDirectory: '<rootDir>/../test-results/unit',
         outputName: 'junit.xml',
         classNameTemplate: '{classname}',
         titleTemplate: '{title}',
