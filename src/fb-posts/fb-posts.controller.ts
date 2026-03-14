@@ -6,6 +6,7 @@ import {
   Patch,
   Body,
   Delete,
+  BadRequestException,
 } from '@nestjs/common';
 import { FbPostsService } from './fb-posts.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
@@ -15,6 +16,16 @@ import { UpdateFbPostDto } from './update-fb-post.dto';
 @Controller()
 export class FbPostsController {
   constructor(private readonly fbPostsService: FbPostsService) {}
+
+  private getTargetUserId(userId?: string): string {
+    const target = userId || process.env.USER_ID;
+    if (!target) {
+      throw new BadRequestException(
+        'USER_ID must be provided in query or environment',
+      );
+    }
+    return target;
+  }
 
   @Get('posts')
   @ApiOperation({ summary: 'Get paginated Facebook posts' })
@@ -55,7 +66,7 @@ export class FbPostsController {
     @Query('showHidden') showHidden: string = 'false',
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = userId || process.env.USER_ID;
+    const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findAll(
       targetUserId,
       page,
@@ -74,7 +85,7 @@ export class FbPostsController {
     @Param('id') id: string,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = userId || process.env.USER_ID;
+    const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findOne(targetUserId, id);
   }
 
@@ -85,14 +96,14 @@ export class FbPostsController {
     @Body() updateDto: UpdateFbPostDto,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = userId || process.env.USER_ID;
+    const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.update(targetUserId, id, updateDto);
   }
 
   @Delete('posts/:id')
   @ApiOperation({ summary: 'Delete a post by ID' })
   async deletePost(@Param('id') id: string, @Query('user_id') userId?: string) {
-    const targetUserId = userId || process.env.USER_ID;
+    const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.remove(targetUserId, id);
   }
 
@@ -124,7 +135,7 @@ export class FbPostsController {
     @Query('search') search?: string,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = userId || process.env.USER_ID;
+    const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findLocations(
       targetUserId,
       category,
@@ -137,7 +148,7 @@ export class FbPostsController {
   @Get('categories')
   @ApiOperation({ summary: 'Get list of unique categories and their counts' })
   async getCategories(@Query('user_id') userId?: string) {
-    const targetUserId = userId || process.env.USER_ID;
+    const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.getCategories(targetUserId);
   }
 }

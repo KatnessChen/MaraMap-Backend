@@ -92,7 +92,31 @@
           "title": { "type": "string" },
           "content": { "type": "string" },
           "category": { "type": "string" },
+          "metadata": { "$ref": "#/components/schemas/MarathonMetadata" },
           "media": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+      "MarathonMetadata": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "race_name": { "type": "string", "nullable": true },
+          "country": { "type": "string", "nullable": true },
+          "city": { "type": "string", "nullable": true },
+          "temperature": { "type": "string", "nullable": true },
+          "participants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "distance": { "type": "string", "nullable": true },
+                "finish_time": { "type": "string", "nullable": true },
+                "pace": { "type": "string", "nullable": true },
+                "race_count": { "type": "integer", "nullable": true }
+              }
+            }
+          }
         }
       },
       "LocationPost": {

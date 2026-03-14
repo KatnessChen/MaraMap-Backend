@@ -17,7 +17,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage --passWithNoTests",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json --passWithNoTests",
+    "test:e2e": "jest --config ./test/jest-e2e.json --passWithNoTests --forceExit",
     "test:report": "open test-report/unit/index.html || xdg-open test-report/unit/index.html",
     "test:report:e2e": "open test-report/e2e/index.html || xdg-open test-report/e2e/index.html",
     "gen:spec": "ts-node -r tsconfig-paths/register scripts/gen-spec.ts"
