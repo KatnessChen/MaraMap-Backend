@@ -63,14 +63,17 @@ jobs:
       - name: Check coverage (with report)
         run: pnpm test:cov
 
+      - name: Debug - List Generated Files
+        if: always()
+        run: ls -R test-results/
+
       - name: Publish unit test results
         uses: dorny/test-reporter@v1
         if: always()
         with:
           name: Unit Tests
-          path: '**/test-results/unit/junit.xml'
+          path: test-results/unit/junit.xml
           reporter: jest-junit
-          list-files: local
           fail-on-error: true
 
       - name: Publish e2e test results
@@ -78,9 +81,8 @@ jobs:
         if: always()
         with:
           name: E2E Tests
-          path: '**/test-results/e2e/junit.xml'
+          path: test-results/e2e/junit.xml
           reporter: jest-junit
-          list-files: local
           fail-on-error: true
 
       - name: Upload HTML test report (unit)
