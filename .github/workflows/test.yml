@@ -68,7 +68,7 @@ jobs:
         if: always()
         with:
           name: Unit Tests
-          path: test-results/unit/junit.xml
+          path: '**/test-results/unit/junit.xml'
           reporter: jest-junit
           fail-on-error: true
 
@@ -77,7 +77,7 @@ jobs:
         if: always()
         with:
           name: E2E Tests
-          path: test-results/e2e/junit.xml
+          path: '**/test-results/e2e/junit.xml'
           reporter: jest-junit
           fail-on-error: true
 
