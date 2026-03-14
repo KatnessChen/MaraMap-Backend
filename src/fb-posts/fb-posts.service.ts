@@ -41,6 +41,7 @@ export class FbPostsService {
       if (!showHidden) {
         query = query.eq('is_hidden', false);
       }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (e) {
       console.warn('⚠️ is_hidden column missing in DB');
     }
@@ -48,10 +49,10 @@ export class FbPostsService {
     if (category) {
       // Support both localized and original category names
       const categoryMap = {
-        '馬拉松': 'marathon',
-        '旅遊': 'travel',
-        '跑步訓練': 'training',
-        '日常生活': 'daily'
+        馬拉松: 'marathon',
+        旅遊: 'travel',
+        跑步訓練: 'training',
+        日常生活: 'daily',
       };
       const dbCategory = categoryMap[category] || category;
       query = query.or(`category.eq.${category},category.eq.${dbCategory}`);

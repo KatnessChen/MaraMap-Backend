@@ -1,4 +1,13 @@
-import { Controller, Get, Query, UseGuards, Req, Param, Patch, Body, Delete, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  Param,
+  Patch,
+  Body,
+  Delete,
+  BadRequestException,
+} from '@nestjs/common';
 import { FbPostsService } from './fb-posts.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { UpdateFbPostDto } from './update-fb-post.dto';
@@ -11,7 +20,9 @@ export class FbPostsController {
   private getTargetUserId(userId?: string): string {
     const target = userId || process.env.USER_ID;
     if (!target) {
-      throw new BadRequestException('USER_ID must be provided in query or environment');
+      throw new BadRequestException(
+        'USER_ID must be provided in query or environment',
+      );
     }
     return target;
   }
@@ -21,10 +32,30 @@ export class FbPostsController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
   @ApiQuery({ name: 'category', required: false, type: String })
-  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Format: YYYY-MM-DD' })
-  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Format: YYYY-MM-DD' })
-  @ApiQuery({ name: 'search', required: false, type: String, description: 'Keywords in content or title' })
-  @ApiQuery({ name: 'showHidden', required: false, type: Boolean, example: false })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description: 'Format: YYYY-MM-DD',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'Format: YYYY-MM-DD',
+  })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    type: String,
+    description: 'Keywords in content or title',
+  })
+  @ApiQuery({
+    name: 'showHidden',
+    required: false,
+    type: Boolean,
+    example: false,
+  })
   async getPosts(
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
@@ -33,18 +64,18 @@ export class FbPostsController {
     @Query('endDate') endDate?: string,
     @Query('search') search?: string,
     @Query('showHidden') showHidden: string = 'false',
-    @Query('user_id') userId?: string, 
+    @Query('user_id') userId?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findAll(
-      targetUserId, 
-      page, 
-      limit, 
-      category, 
-      startDate, 
-      endDate, 
+      targetUserId,
+      page,
+      limit,
+      category,
+      startDate,
+      endDate,
       search,
-      showHidden === 'true'
+      showHidden === 'true',
     );
   }
 
@@ -71,10 +102,7 @@ export class FbPostsController {
 
   @Delete('posts/:id')
   @ApiOperation({ summary: 'Delete a post by ID' })
-  async deletePost(
-    @Param('id') id: string,
-    @Query('user_id') userId?: string,
-  ) {
+  async deletePost(@Param('id') id: string, @Query('user_id') userId?: string) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.remove(targetUserId, id);
   }
@@ -82,9 +110,24 @@ export class FbPostsController {
   @Get('locations')
   @ApiOperation({ summary: 'Get geotagged content for the map' })
   @ApiQuery({ name: 'category', required: false, type: String })
-  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Format: YYYY-MM-DD' })
-  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Format: YYYY-MM-DD' })
-  @ApiQuery({ name: 'search', required: false, type: String, description: 'Keywords' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description: 'Format: YYYY-MM-DD',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'Format: YYYY-MM-DD',
+  })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    type: String,
+    description: 'Keywords',
+  })
   async getLocations(
     @Query('category') category?: string,
     @Query('startDate') startDate?: string,
@@ -98,7 +141,7 @@ export class FbPostsController {
       category,
       startDate,
       endDate,
-      search
+      search,
     );
   }
 
