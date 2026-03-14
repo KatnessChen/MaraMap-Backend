@@ -70,6 +70,7 @@ jobs:
           name: Unit Tests
           path: '**/test-results/unit/junit.xml'
           reporter: jest-junit
+          list-files: local
           fail-on-error: true
 
       - name: Publish e2e test results
@@ -79,6 +80,7 @@ jobs:
           name: E2E Tests
           path: '**/test-results/e2e/junit.xml'
           reporter: jest-junit
+          list-files: local
           fail-on-error: true
 
       - name: Upload HTML test report (unit)
