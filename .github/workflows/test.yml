@@ -64,22 +64,12 @@ jobs:
       - name: Check coverage (with report)
         run: pnpm test:cov
 
-      # --- NEW: Upload Results as Artifacts to bypass Git discovery issues ---
-      - name: Upload Test Results Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ github.run_id }}
-          path: test-results/
-          retention-days: 1
-
       - name: Publish unit test results
         uses: dorny/test-reporter@v1
         if: always()
         with:
           name: Unit Tests
-          artifact: test-results-${{ github.run_id }}
-          path: unit/junit.xml
+          path: test-results/unit/junit.xml
           reporter: jest-junit
           fail-on-error: true
 
@@ -88,8 +78,7 @@ jobs:
         if: always()
         with:
           name: E2E Tests
-          artifact: test-results-${{ github.run_id }}
-          path: e2e/junit.xml
+          path: test-results/e2e/junit.xml
           reporter: jest-junit
           fail-on-error: true
 
