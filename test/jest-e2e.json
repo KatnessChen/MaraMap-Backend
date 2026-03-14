@@ -9,13 +9,13 @@
   "reporters": [
     "default",
     ["jest-html-reporters", {
-      "publicPath": "../test-report/e2e",
+      "publicPath": "./test-report/e2e",
       "filename": "index.html",
       "openReport": false,
       "pageTitle": "MaraMap E2E Test Report"
     }],
     ["jest-junit", {
-      "outputDirectory": "../test-results/e2e",
+      "outputDirectory": "./test-results/e2e",
       "outputName": "junit.xml",
       "classNameTemplate": "{classname}",
       "titleTemplate": "{title}"
