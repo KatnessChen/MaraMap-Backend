@@ -93,4 +93,33 @@ describe('AuthService', () => {
       );
     });
   });
+
+  describe('verifyAdminToken', () => {
+    it('should return true for a valid admin token', async () => {
+      (service as any).jwtService.verifyAsync = jest
+        .fn()
+        .mockResolvedValueOnce({ role: 'admin' });
+
+      const result = await service.verifyAdminToken('valid-token');
+      expect(result).toBe(true);
+    });
+
+    it('should return false for a non-admin token', async () => {
+      (service as any).jwtService.verifyAsync = jest
+        .fn()
+        .mockResolvedValueOnce({ role: 'user' });
+
+      const result = await service.verifyAdminToken('user-token');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when token verification throws', async () => {
+      (service as any).jwtService.verifyAsync = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('invalid token'));
+
+      const result = await service.verifyAdminToken('bad-token');
+      expect(result).toBe(false);
+    });
+  });
 });

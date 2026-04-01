@@ -1,4 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import {
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { FbPostsService } from './fb-posts.service';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -15,6 +19,9 @@ describe('FbPostsService', () => {
     gte: jest.fn().mockReturnThis(),
     lte: jest.fn().mockReturnThis(),
     or: jest.fn().mockReturnThis(),
+    ilike: jest.fn().mockReturnThis(),
+    contains: jest.fn().mockReturnThis(),
+    neq: jest.fn().mockReturnThis(),
     single: jest.fn().mockReturnThis(),
     update: jest.fn().mockReturnThis(),
     // Make thenable to support await
@@ -106,6 +113,147 @@ describe('FbPostsService', () => {
       expect(mockSupabaseClient.delete).toHaveBeenCalled();
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('id', 'post-1');
       expect(result).toEqual(mockDeleted);
+    });
+  });
+
+  describe('findOne', () => {
+    it('should throw NotFoundException when post not found', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, error: { message: 'Not found' } }),
+      );
+      await expect(service.findOne('user-123', 'missing')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should not filter by is_hidden when isAdmin is true', async () => {
+      const mockPost = { id: 'post-1', title: 'Hidden Post', media: [], is_hidden: true };
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPost, error: null }),
+      );
+      const result = await service.findOne('user-123', 'post-1', true);
+      expect(result).toMatchObject({ id: 'post-1', cover_image: null });
+    });
+  });
+
+  describe('fuzzySearch', () => {
+    it('should return paginated search results', async () => {
+      const mockData = [{ id: '1', title: 'Race Day', media: [] }];
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockData, count: 1, error: null }),
+      );
+
+      const result = await service.fuzzySearch('user-123', { q: 'race', limit: 10, offset: 0 });
+      expect(result.data).toHaveLength(1);
+      expect(result.meta.total).toBe(1);
+    });
+
+    it('should throw InternalServerErrorException on Supabase error', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, count: 0, error: { message: 'DB error' } }),
+      );
+      await expect(service.fuzzySearch('user-123', {})).rejects.toThrow(
+        InternalServerErrorException,
+      );
+    });
+  });
+
+  describe('findLocations', () => {
+    it('should return empty array when userId is missing', async () => {
+      const result = await service.findLocations('');
+      expect(result).toEqual([]);
+    });
+
+    it('should return mapped location data for posts with GPS media', async () => {
+      const mockPosts = [
+        {
+          id: 'p1',
+          title: 'Race',
+          event_date: '2026-01-01',
+          category: 'marathon',
+          media: [{ lat: 25.0, lng: 121.0, uri: 'img.jpg', type: 'photo' }],
+          metadata: { country: 'Taiwan' },
+        },
+      ];
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPosts, error: null }),
+      );
+
+      const result = await service.findLocations('user-123');
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ lat: 25.0, lng: 121.0, country: 'Taiwan' });
+    });
+
+    it('should filter out posts with no GPS media', async () => {
+      const mockPosts = [
+        { id: 'p1', title: 'No GPS', event_date: '2026-01-01', category: 'daily', media: [], metadata: {} },
+      ];
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPosts, error: null }),
+      );
+
+      const result = await service.findLocations('user-123');
+      expect(result).toHaveLength(0);
+    });
+
+    it('should return empty array on Supabase error', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, error: { message: 'error' } }),
+      );
+
+      const result = await service.findLocations('user-123');
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('getCategories', () => {
+    it('should return empty array when userId is missing', async () => {
+      const result = await service.getCategories('');
+      expect(result).toEqual([]);
+    });
+
+    it('should aggregate categories and return counts', async () => {
+      const mockData = [
+        { category: 'marathon' },
+        { category: 'marathon' },
+        { category: 'travel' },
+      ];
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockData, error: null }),
+      );
+
+      const result = await service.getCategories('user-123');
+      expect(result).toEqual(
+        expect.arrayContaining([
+          { name: 'marathon', count: 2 },
+          { name: 'travel', count: 1 },
+        ]),
+      );
+    });
+  });
+
+  describe('findAll', () => {
+    it('should throw InternalServerErrorException on Supabase error', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, count: 0, error: { message: 'DB error' } }),
+      );
+      await expect(service.findAll('user-123')).rejects.toThrow(
+        InternalServerErrorException,
+      );
+    });
+
+    it('should normalizePost with cover_image fallback from media', async () => {
+      const mockPost = {
+        id: '1',
+        media: [{ uri: 'images/photo.jpg', type: 'photo' }],
+        cover_image: '',
+      };
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [mockPost], count: 1, error: null }),
+      );
+
+      const result = await service.findAll('user-123');
+      expect(result.data[0].cover_image).toMatch(/images\/photo\.jpg$/);
     });
   });
 });
