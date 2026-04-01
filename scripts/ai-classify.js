@@ -40,17 +40,31 @@ async function classifyPosts() {
       }
 
       const prompt = `
-        你是一位馬拉松與旅遊專家。請根據以下貼文列表，判讀每篇的主題分類。
-        請回傳一組 JSON 數組，格式為: [{"category": "馬拉松|旅遊|跑步訓練|日常生活", "tags": ["關鍵字1"]}]
+        你是一位馬拉松與旅遊專家。請根據以下貼文列表，判讀每篇的主題分類、地理資訊與顯示狀態。
+        請回傳一組 JSON 數組，格式為: 
+        [{
+          "category": "marathon|travel|training|daily", 
+          "tags": ["關鍵字1"],
+          "continent": "亞洲|歐洲|北美洲|南美洲|非洲|大洋洲|南極洲",
+          "is_overseas": true|false,
+          "is_hidden": true|false
+        }]
         
         重要規則：
-        1. 馬拉松 (marathon): 正式的馬拉松賽事 (通常有完賽時間、第幾馬、號碼布、破紀錄等資訊)。
-        2. 跑步訓練 (training): 日常練習跑、自主訓練。
-        3. 旅遊 (travel): 出國旅遊、參觀景點、飛機、飯店、不包含跑步內容。
-        4. 日常生活 (daily): 祝人生日快樂、吃飯、開會等日常瑣事。
-        5. 如果文字太少或標題模糊（如「分享了 1 則貼文」）導致無法判讀，請直接將 category 設為 "日常生活" 即可。
-        6. **請務必只回傳 JSON 內容，不要包含任何開場白或解釋。**
-        7. 必須回傳與傳入數量相同的 JSON 元素。
+        1. marathon: 正式的馬拉松賽事 (通常有完賽時間、第幾馬、號碼布、破紀錄等資訊)。
+        2. training: 日常練習跑、自主訓練、非正式比賽。
+        3. travel: 出國旅遊、參觀景點、飛機、飯店、不包含跑步內容。
+        4. daily: 祝人生日快樂、吃飯、開會、生活瑣事、與運動或旅遊無關者。
+        
+        判定邏輯：
+        - is_hidden: 若 category 為 "daily" 或與「運動、旅遊、賽事」無關，請設為 true。
+        - is_overseas: 若地點不在台灣 (Taiwan)，請設為 true。
+        - continent: 根據文中提到的城市或國家判定所屬大洲。若在台灣則為 "亞洲"。
+        
+        其他規則：
+        - 如果文字太少或標題模糊（如「分享了 1 則貼文」）導致無法判讀，請將 category 設為 "daily" 且 is_hidden 設為 true。
+        - **請務必只回傳 JSON 內容，不要包含任何開場白或解釋。**
+        - 必須回傳與傳入數量相同的 JSON 元素。
 
         貼文列表:
         ${JSON.stringify(batch.map((p, idx) => ({ id: i + idx, text: p.text, title: p.title })))}
@@ -73,7 +87,10 @@ async function classifyPosts() {
         results.push({
           ...post,
           category: classifications[idx].category,
-          tags: classifications[idx].tags
+          tags: classifications[idx].tags,
+          continent: classifications[idx].continent,
+          is_overseas: classifications[idx].is_overseas,
+          is_hidden: classifications[idx].is_hidden
         });
       });
     }
