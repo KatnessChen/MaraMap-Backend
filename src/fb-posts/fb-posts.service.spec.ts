@@ -71,14 +71,14 @@ describe('FbPostsService', () => {
 
   describe('findOne', () => {
     it('should return a single post', async () => {
-      const mockPost = { id: 'post-1', title: 'Test Post' };
+      const mockPost = { id: 'post-1', title: 'Test Post', media: [] };
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: mockPost, error: null }),
       );
 
       const result = await service.findOne('user-123', 'post-1');
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('id', 'post-1');
-      expect(result).toEqual(mockPost);
+      expect(result).toEqual({ ...mockPost, cover_image: null });
     });
   });
 
