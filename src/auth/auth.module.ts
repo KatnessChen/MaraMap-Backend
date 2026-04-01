@@ -1,14 +1,24 @@
 import { Module } from '@nestjs/common';
-import { PassportModule } from '@nestjs/passport';
-import { SupabaseStrategy } from './strategies/supabase.strategy';
-import { SupabaseAuthGuard } from './guards/supabase-auth.guard';
-import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { AuthController } from './auth.controller';
+import { SupabaseModule } from '../supabase/supabase.module';
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 
 @Module({
-  imports: [PassportModule.register({ defaultStrategy: 'supabase-jwt' })],
+  imports: [
+    SupabaseModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        secret: configService.get<string>('JWT_SECRET') || 'maramap_secret_key_2026',
+        signOptions: { expiresIn: '1h' },
+      }),
+      inject: [ConfigService],
+    }),
+  ],
   controllers: [AuthController],
-  providers: [SupabaseStrategy, SupabaseAuthGuard, AuthService],
-  exports: [PassportModule, SupabaseAuthGuard],
+  providers: [AuthService],
+  exports: [AuthService],
 })
 export class AuthModule {}
