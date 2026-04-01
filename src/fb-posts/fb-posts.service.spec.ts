@@ -62,7 +62,9 @@ describe('FbPostsService', () => {
 
       expect(mockSupabaseClient.from).toHaveBeenCalledWith('fb_posts');
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('user_id', userId);
-      expect(mockSupabaseClient.or).toHaveBeenCalledWith(expect.stringContaining('category.eq.馬拉松'));
+      expect(mockSupabaseClient.or).toHaveBeenCalledWith(
+        expect.stringContaining('category.eq.馬拉松'),
+      );
       expect(mockSupabaseClient.range).toHaveBeenCalledWith(0, 9);
     });
   });

@@ -11,7 +11,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { FbPostsService } from './fb-posts.service';
-import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UpdateFbPostDto } from './update-fb-post.dto';
 import { FuzzySearchDto } from './fb-post.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
@@ -59,14 +59,17 @@ export class FbPostsController {
       status,
       order,
       tag,
-      req.isAdmin // 傳入管理員權限標記
+      req.isAdmin, // 傳入管理員權限標記
     );
   }
 
   @Public()
   @Get('posts/search')
   @ApiOperation({ summary: '模糊搜尋文章' })
-  async searchPosts(@Query() queryDto: FuzzySearchDto, @Query('user_id') userId?: string) {
+  async searchPosts(
+    @Query() queryDto: FuzzySearchDto,
+    @Query('user_id') userId?: string,
+  ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.fuzzySearch(targetUserId, queryDto);
   }
@@ -76,8 +79,8 @@ export class FbPostsController {
   @ApiOperation({ summary: '取得單篇文章詳情' })
   async getPostById(
     @Req() req: any,
-    @Param('id') id: string, 
-    @Query('user_id') userId?: string
+    @Param('id') id: string,
+    @Query('user_id') userId?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findOne(targetUserId, id, req.isAdmin);
@@ -86,7 +89,11 @@ export class FbPostsController {
   @Patch('posts/:id')
   @ApiBearerAuth('admin-token')
   @ApiOperation({ summary: '編輯文章 (僅限管理員)' })
-  async updatePost(@Param('id') id: string, @Body() updateDto: UpdateFbPostDto, @Query('user_id') userId?: string) {
+  async updatePost(
+    @Param('id') id: string,
+    @Body() updateDto: UpdateFbPostDto,
+    @Query('user_id') userId?: string,
+  ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.update(targetUserId, id, updateDto);
   }
@@ -102,9 +109,21 @@ export class FbPostsController {
   @Public()
   @Get('locations')
   @ApiOperation({ summary: '取得地圖點位' })
-  async getLocations(@Query('category') category?: string, @Query('startDate') startDate?: string, @Query('endDate') endDate?: string, @Query('search') search?: string, @Query('user_id') userId?: string) {
+  async getLocations(
+    @Query('category') category?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('search') search?: string,
+    @Query('user_id') userId?: string,
+  ) {
     const targetUserId = this.getTargetUserId(userId);
-    return this.fbPostsService.findLocations(targetUserId, category, startDate, endDate, search);
+    return this.fbPostsService.findLocations(
+      targetUserId,
+      category,
+      startDate,
+      endDate,
+      search,
+    );
   }
 
   @Public()

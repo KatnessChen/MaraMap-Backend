@@ -57,7 +57,9 @@ export class FbPostDto {
 }
 
 export class FuzzySearchDto {
-  @ApiPropertyOptional({ description: 'Search keyword (matches title or content)' })
+  @ApiPropertyOptional({
+    description: 'Search keyword (matches title or content)',
+  })
   @IsOptional()
   @IsString()
   q?: string;
@@ -85,7 +87,10 @@ export class FuzzySearchDto {
   @Transform(({ value }) => parseInt(value))
   limit?: number = 20;
 
-  @ApiPropertyOptional({ description: 'Offset results for pagination', default: 0 })
+  @ApiPropertyOptional({
+    description: 'Offset results for pagination',
+    default: 0,
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)

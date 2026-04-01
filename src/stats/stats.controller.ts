@@ -1,4 +1,10 @@
-import { Controller, Get, Post, Query, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Query,
+  BadRequestException,
+} from '@nestjs/common';
 import { StatsService } from './stats.service';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 
@@ -22,9 +28,13 @@ export class StatsController {
   }
 
   @Post('refresh')
-  @ApiOperation({ summary: 'Manually trigger a refresh of all participant stats' })
+  @ApiOperation({
+    summary: 'Manually trigger a refresh of all participant stats',
+  })
   async refreshStats() {
     await this.statsService.refreshAllStats();
-    return { message: 'Participant statistics refresh initiated successfully.' };
+    return {
+      message: 'Participant statistics refresh initiated successfully.',
+    };
   }
 }

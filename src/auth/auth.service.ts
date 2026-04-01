@@ -23,8 +23,10 @@ export class AuthService {
     const { email, password } = dto;
 
     // --- Hardcoded Admin Check ---
-    const adminUsername = this.configService.get<string>('ADMIN_USERNAME') || 'admin';
-    const adminPassword = this.configService.get<string>('ADMIN_PASSWORD') || '81986369';
+    const adminUsername =
+      this.configService.get<string>('ADMIN_USERNAME') || 'admin';
+    const adminPassword =
+      this.configService.get<string>('ADMIN_PASSWORD') || '81986369';
 
     if (email === adminUsername && password === adminPassword) {
       console.log('🔑 Admin login detected. Generating JWT...');
@@ -32,7 +34,7 @@ export class AuthService {
       const payload = { username: adminUsername, sub: 'admin', role: 'admin' };
       return {
         token: this.jwtService.sign(payload),
-        role: 'admin'
+        role: 'admin',
       };
     }
 
@@ -56,7 +58,7 @@ export class AuthService {
     try {
       const payload = await this.jwtService.verifyAsync(token);
       return payload.role === 'admin';
-    } catch (e) {
+    } catch {
       return false;
     }
   }

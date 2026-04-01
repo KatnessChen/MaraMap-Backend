@@ -40,7 +40,7 @@ export class StatsService {
    */
   async refreshAllStats() {
     const client = this.supabase.getClient();
-    
+
     const { data: posts, error } = await client
       .from('fb_posts')
       .select('metadata, category')
@@ -53,12 +53,12 @@ export class StatsService {
 
     const statsMap = new Map<string, any>();
 
-    posts.forEach(post => {
+    posts.forEach((post) => {
       const participants = post.metadata?.participants;
       const category = post.category || '';
       if (!Array.isArray(participants)) return;
 
-      participants.forEach(p => {
+      participants.forEach((p) => {
         const name = p.name;
         if (!['Davis', 'Rose'].includes(name)) return;
 
@@ -71,7 +71,7 @@ export class StatsService {
             um_count: 0,
             calculated_fm: 0,
             calculated_hm: 0,
-            calculated_um: 0
+            calculated_um: 0,
           });
         }
 
@@ -86,20 +86,28 @@ export class StatsService {
 
         // 2. Calculated Counts (ONLY for marathon category)
         if (category === 'marathon') {
-          if (distanceType.includes('超馬') || (pStats.distance_km > 45)) {
+          if (distanceType.includes('超馬') || pStats.distance_km > 45) {
             current.calculated_fm += 1;
             current.calculated_um += 1;
-          } else if (distanceType.includes('全馬') || (pStats.distance_km >= 40)) {
+          } else if (
+            distanceType.includes('全馬') ||
+            pStats.distance_km >= 40
+          ) {
             current.calculated_fm += 1;
-          } else if (distanceType.includes('半馬') || (pStats.distance_km >= 20)) {
+          } else if (
+            distanceType.includes('半馬') ||
+            pStats.distance_km >= 20
+          ) {
             current.calculated_hm += 1;
           }
         }
 
         // 3. Manual/Extracted Overrides (Take the maximum found in text)
         // Keep FM and HM overrides, skip UM overrides as previously discussed
-        if (pStats.FM_count) current.fm_count = Math.max(current.fm_count, pStats.FM_count);
-        if (pStats.HM_count) current.hm_count = Math.max(current.hm_count, pStats.HM_count);
+        if (pStats.FM_count)
+          current.fm_count = Math.max(current.fm_count, pStats.FM_count);
+        if (pStats.HM_count)
+          current.hm_count = Math.max(current.hm_count, pStats.HM_count);
       });
     });
 
@@ -113,8 +121,8 @@ export class StatsService {
         // HM_count: Use max of extracted OR calculated
         hm_count: Math.max(stats.hm_count, stats.calculated_hm),
         // UM_count: Use ONLY calculated sum (since Davis doesn't count UM separately in text)
-        um_count: stats.calculated_um, 
-        last_updated: new Date().toISOString()
+        um_count: stats.calculated_um,
+        last_updated: new Date().toISOString(),
       };
 
       const { error: upsertError } = await client
@@ -122,7 +130,9 @@ export class StatsService {
         .upsert(finalStats, { onConflict: 'participant_name' });
 
       if (upsertError) {
-        this.logger.error(`Failed to update stats for ${name}: ${upsertError.message}`);
+        this.logger.error(
+          `Failed to update stats for ${name}: ${upsertError.message}`,
+        );
       } else {
         this.logger.log(`✅ Successfully updated stats for ${name}`);
       }
