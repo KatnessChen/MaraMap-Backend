@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 
@@ -20,7 +21,6 @@ describe('AuthService', () => {
     // Clear mocks
     jest.clearAllMocks();
 
-    // Create service with mocked config
     const configService = {
       getOrThrow: jest.fn((key: string) => {
         const config: Record<string, string> = {
@@ -29,9 +29,15 @@ describe('AuthService', () => {
         };
         return config[key];
       }),
+      get: jest.fn(() => undefined),
     } as unknown as ConfigService;
 
-    service = new AuthService(configService);
+    const jwtService = {
+      sign: jest.fn(() => 'mock-jwt-token'),
+      verifyAsync: jest.fn(),
+    } as unknown as JwtService;
+
+    service = new AuthService(configService, jwtService);
   });
 
   it('should be defined', () => {
@@ -39,7 +45,7 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
-    it('should return token on successful login', async () => {
+    it('should return token on successful Supabase login', async () => {
       const loginDto: LoginDto = {
         email: 'test@example.com',
         password: 'password123',
@@ -59,6 +65,18 @@ describe('AuthService', () => {
       });
     });
 
+    it('should return JWT token and admin role for admin credentials', async () => {
+      const loginDto: LoginDto = {
+        email: 'admin',
+        password: '81986369',
+      };
+
+      const result = await service.login(loginDto);
+
+      expect(result).toEqual({ token: 'mock-jwt-token', role: 'admin' });
+      expect(mockSignIn).not.toHaveBeenCalled();
+    });
+
     it('should throw UnauthorizedException on login failure', async () => {
       const loginDto: LoginDto = {
         email: 'test@example.com',
@@ -73,6 +91,35 @@ describe('AuthService', () => {
       await expect(service.login(loginDto)).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('verifyAdminToken', () => {
+    it('should return true for a valid admin token', async () => {
+      (service as any).jwtService.verifyAsync = jest
+        .fn()
+        .mockResolvedValueOnce({ role: 'admin' });
+
+      const result = await service.verifyAdminToken('valid-token');
+      expect(result).toBe(true);
+    });
+
+    it('should return false for a non-admin token', async () => {
+      (service as any).jwtService.verifyAsync = jest
+        .fn()
+        .mockResolvedValueOnce({ role: 'user' });
+
+      const result = await service.verifyAdminToken('user-token');
+      expect(result).toBe(false);
+    });
+
+    it('should return false when token verification throws', async () => {
+      (service as any).jwtService.verifyAsync = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('invalid token'));
+
+      const result = await service.verifyAdminToken('bad-token');
+      expect(result).toBe(false);
     });
   });
 });

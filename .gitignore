@@ -28,3 +28,8 @@ docs/temp
 
 # Facebook data
 fb/
+
+# Data & Log files
+maramap_final_data.json
+marathon_gps_data.json
+server_log.txt

@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsBoolean } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsArray,
+  IsObject,
+} from 'class-validator';
 
 export class UpdateFbPostDto {
   @ApiPropertyOptional()
@@ -16,4 +22,25 @@ export class UpdateFbPostDto {
   @IsBoolean()
   @IsOptional()
   is_hidden?: boolean;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  category?: string;
+
+  @ApiPropertyOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  tags?: string[];
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  cover_image?: string;
+
+  @ApiPropertyOptional()
+  @IsObject()
+  @IsOptional()
+  metadata?: any;
 }

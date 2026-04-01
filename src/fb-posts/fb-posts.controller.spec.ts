@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
 import { FbPostsController } from './fb-posts.controller';
 import { FbPostsService } from './fb-posts.service';
+import { AuthService } from '../auth/auth.service';
+import { AdminGuard } from '../auth/guards/admin.guard';
 
 describe('FbPostsController', () => {
   let controller: FbPostsController;
@@ -9,6 +12,7 @@ describe('FbPostsController', () => {
   const mockFbPostsService = {
     findAll: jest.fn(),
     findOne: jest.fn(),
+    fuzzySearch: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
     findLocations: jest.fn(),
@@ -23,6 +27,12 @@ describe('FbPostsController', () => {
           provide: FbPostsService,
           useValue: mockFbPostsService,
         },
+        {
+          provide: AuthService,
+          useValue: { verifyAdminToken: jest.fn().mockResolvedValue(false) },
+        },
+        AdminGuard,
+        Reflector,
       ],
     }).compile();
 
@@ -36,15 +46,18 @@ describe('FbPostsController', () => {
 
   describe('getPosts', () => {
     it('should call service.findAll with correct params', async () => {
-      // Note: query params come as strings from @Query, our controller converts them
+      const mockReq = { isAdmin: false };
       await controller.getPosts(
+        mockReq,
         2,
         5,
         '馬拉松',
         '2026-01-01',
         '2026-01-31',
         'race',
-        'false',
+        'visible',
+        'desc',
+        undefined,
         'user-1',
       );
       expect(service.findAll).toHaveBeenCalledWith(
@@ -55,6 +68,9 @@ describe('FbPostsController', () => {
         '2026-01-01',
         '2026-01-31',
         'race',
+        'visible',
+        'desc',
+        undefined,
         false,
       );
     });
@@ -62,8 +78,9 @@ describe('FbPostsController', () => {
 
   describe('getPostById', () => {
     it('should call service.findOne', async () => {
-      await controller.getPostById('post-123', 'user-1');
-      expect(service.findOne).toHaveBeenCalledWith('user-1', 'post-123');
+      const mockReq = { isAdmin: false };
+      await controller.getPostById(mockReq, 'post-123', 'user-1');
+      expect(service.findOne).toHaveBeenCalledWith('user-1', 'post-123', false);
     });
   });
 
