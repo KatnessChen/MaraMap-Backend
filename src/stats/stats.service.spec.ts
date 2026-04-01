@@ -28,7 +28,9 @@ describe('StatsService', () => {
         StatsService,
         {
           provide: SupabaseService,
-          useValue: { getClient: jest.fn().mockReturnValue(mockSupabaseClient) },
+          useValue: {
+            getClient: jest.fn().mockReturnValue(mockSupabaseClient),
+          },
         },
       ],
     }).compile();
@@ -50,7 +52,10 @@ describe('StatsService', () => {
       const result = await service.getParticipantStats('Davis');
 
       expect(mockSupabaseClient.from).toHaveBeenCalledWith('participant_stats');
-      expect(mockSupabaseClient.ilike).toHaveBeenCalledWith('participant_name', 'Davis');
+      expect(mockSupabaseClient.ilike).toHaveBeenCalledWith(
+        'participant_name',
+        'Davis',
+      );
       expect(result).toEqual(mockData);
     });
 
@@ -142,7 +147,9 @@ describe('StatsService', () => {
         {
           category: 'marathon',
           metadata: {
-            participants: [{ name: 'Unknown', distance: '全馬', stats: { distance_km: 42 } }],
+            participants: [
+              { name: 'Unknown', distance: '全馬', stats: { distance_km: 42 } },
+            ],
           },
         },
       ];

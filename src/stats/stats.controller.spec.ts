@@ -32,7 +32,9 @@ describe('StatsController', () => {
 
       const result = await controller.getStats('Davis');
 
-      expect(mockStatsService.getParticipantStats).toHaveBeenCalledWith('Davis');
+      expect(mockStatsService.getParticipantStats).toHaveBeenCalledWith(
+        'Davis',
+      );
       expect(result).toEqual(mockData);
     });
 
@@ -41,7 +43,9 @@ describe('StatsController', () => {
 
       const result = await controller.getStats('Unknown');
 
-      expect(result).toEqual({ message: 'No stats found for participant: Unknown' });
+      expect(result).toEqual({
+        message: 'No stats found for participant: Unknown',
+      });
     });
 
     it('should throw BadRequestException when participant is missing', async () => {

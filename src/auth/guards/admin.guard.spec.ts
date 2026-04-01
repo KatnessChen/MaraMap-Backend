@@ -11,7 +11,10 @@ const mockReflector = {
   getAllAndOverride: jest.fn(),
 };
 
-function createMockContext(authHeader?: string, isPublic = false): ExecutionContext {
+function createMockContext(
+  authHeader?: string,
+  isPublic = false,
+): ExecutionContext {
   mockReflector.getAllAndOverride.mockReturnValue(isPublic);
   return {
     getHandler: jest.fn(),
@@ -51,7 +54,9 @@ describe('AdminGuard', () => {
     mockAuthService.verifyAdminToken.mockResolvedValueOnce(true);
     const context = createMockContext('Bearer valid-token', true);
     const result = await guard.canActivate(context);
-    expect(mockAuthService.verifyAdminToken).toHaveBeenCalledWith('valid-token');
+    expect(mockAuthService.verifyAdminToken).toHaveBeenCalledWith(
+      'valid-token',
+    );
     expect(result).toBe(true);
   });
 
@@ -64,12 +69,16 @@ describe('AdminGuard', () => {
 
   it('should throw UnauthorizedException for protected route with no token', async () => {
     const context = createMockContext(undefined, false);
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('should throw UnauthorizedException for protected route with invalid token', async () => {
     mockAuthService.verifyAdminToken.mockResolvedValueOnce(false);
     const context = createMockContext('Bearer bad-token', false);
-    await expect(guard.canActivate(context)).rejects.toThrow(UnauthorizedException);
+    await expect(guard.canActivate(context)).rejects.toThrow(
+      UnauthorizedException,
+    );
   });
 });

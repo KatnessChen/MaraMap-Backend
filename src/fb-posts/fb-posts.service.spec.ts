@@ -127,7 +127,12 @@ describe('FbPostsService', () => {
     });
 
     it('should not filter by is_hidden when isAdmin is true', async () => {
-      const mockPost = { id: 'post-1', title: 'Hidden Post', media: [], is_hidden: true };
+      const mockPost = {
+        id: 'post-1',
+        title: 'Hidden Post',
+        media: [],
+        is_hidden: true,
+      };
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: mockPost, error: null }),
       );
@@ -143,7 +148,11 @@ describe('FbPostsService', () => {
         resolve({ data: mockData, count: 1, error: null }),
       );
 
-      const result = await service.fuzzySearch('user-123', { q: 'race', limit: 10, offset: 0 });
+      const result = await service.fuzzySearch('user-123', {
+        q: 'race',
+        limit: 10,
+        offset: 0,
+      });
       expect(result.data).toHaveLength(1);
       expect(result.meta.total).toBe(1);
     });
@@ -181,12 +190,23 @@ describe('FbPostsService', () => {
 
       const result = await service.findLocations('user-123');
       expect(result).toHaveLength(1);
-      expect(result[0]).toMatchObject({ lat: 25.0, lng: 121.0, country: 'Taiwan' });
+      expect(result[0]).toMatchObject({
+        lat: 25.0,
+        lng: 121.0,
+        country: 'Taiwan',
+      });
     });
 
     it('should filter out posts with no GPS media', async () => {
       const mockPosts = [
-        { id: 'p1', title: 'No GPS', event_date: '2026-01-01', category: 'daily', media: [], metadata: {} },
+        {
+          id: 'p1',
+          title: 'No GPS',
+          event_date: '2026-01-01',
+          category: 'daily',
+          media: [],
+          metadata: {},
+        },
       ];
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: mockPosts, error: null }),
