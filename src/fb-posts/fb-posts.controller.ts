@@ -111,6 +111,7 @@ export class FbPostsController {
   @ApiOperation({ summary: '取得地圖點位' })
   async getLocations(
     @Query('category') category?: string,
+    @Query('sub_category') subCategory?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('search') search?: string,
@@ -120,10 +121,23 @@ export class FbPostsController {
     return this.fbPostsService.findLocations(
       targetUserId,
       category,
+      subCategory,
       startDate,
       endDate,
       search,
     );
+  }
+
+  @Public()
+  @Get('locations/by-country')
+  @ApiOperation({ summary: '取得特定國家的所有賽事' })
+  async getByCountry(
+    @Query('country') country: string,
+    @Query('user_id') userId?: string,
+  ) {
+    if (!country) throw new BadRequestException('country is required');
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.findByCountry(targetUserId, country);
   }
 
   @Public()
