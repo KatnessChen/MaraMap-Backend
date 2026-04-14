@@ -1,0 +1,109 @@
+summary: "MaraMap Data Pipeline"
+description: "Ingest → Classify → [Base || Marathon || Hiking] → Format → Merge → Import"
+
+value:
+  modules:
+
+    - id: 01_ingest
+      summary: "1 · Ingest FB Data → posts.json + media.json"
+      value:
+        type: rawscript
+        language: bash
+        content: |
+          set -a && . /app/etl/.env && set +a
+          cd /app
+          node etl/01_ingest/ingest-fb-data.js
+
+    - id: 02_classify
+      summary: "2 · Classify → classified.json (category + sub_categories, skip excluded)"
+      value:
+        type: rawscript
+        language: bash
+        content: |
+          set -a && . /app/etl/.env && set +a
+          cd /app
+          node etl/02_classify/ai-classify.js $timestamps
+        input_transforms:
+          timestamps:
+            type: javascript
+            expr: "(flow_input.timestamps || []).join(' ')"
+
+    - id: 03_analyze_parallel
+      summary: "3 · Analyze (parallel)"
+      value:
+        type: branchall
+        parallel: true
+        branches:
+
+          - summary: "Base Analyze — continent, country, city, title (all posts)"
+            modules:
+              - id: 03a_analyze_base
+                value:
+                  type: rawscript
+                  language: bash
+                  content: |
+                    set -a && . /app/etl/.env && set +a
+                    cd /app
+                    node etl/03_analyze/00_base/analyze.js
+
+          - summary: "Marathon Analyze — race_name, participants, is_pb"
+            modules:
+              - id: 03b_analyze_marathon
+                value:
+                  type: rawscript
+                  language: bash
+                  content: |
+                    set -a && . /app/etl/.env && set +a
+                    cd /app
+                    node etl/03_analyze/01_marathon/analyze.js
+
+          - summary: "Hiking Analyze — mountain_name, peak_number, elevation"
+            modules:
+              - id: 03c_analyze_hiking
+                value:
+                  type: rawscript
+                  language: bash
+                  content: |
+                    set -a && . /app/etl/.env && set +a
+                    cd /app
+                    node etl/03_analyze/02_hiking/analyze.js
+
+    - id: 04_format
+      summary: "4 · Format — pangu spacing between half-width and full-width characters"
+      value:
+        type: rawscript
+        language: bash
+        content: |
+          cd /app
+          node etl/04_format/analyze.js
+
+    - id: 05_merge
+      summary: "5 · Merge all deltas → analyzed.json"
+      value:
+        type: rawscript
+        language: bash
+        content: |
+          cd /app
+          node etl/05_merge/merge.js
+
+    - id: 06_import
+      summary: "6 · Import to Supabase"
+      value:
+        type: rawscript
+        language: bash
+        content: |
+          set -a && . /app/etl/.env && set +a
+          cd /app
+          node etl/06_import/import-to-supabase.js
+
+schema:
+  $schema: "https://json-schema.org/draft/2020-12/schema"
+  properties:
+    timestamps:
+      type: array
+      items:
+        type: number
+      description: "留空 = 全部重跑。填入 timestamp 陣列 = 只重新分類指定貼文。"
+      default: []
+  required: []
+  type: object

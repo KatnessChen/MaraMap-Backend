@@ -19,14 +19,29 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const isPreserveUserEdition = false; 
 
 async function importData() {
-  const filePath = path.join(__dirname, '../maramap_final_data.json');
+  const filePath = path.join(__dirname, '../05_merge/output/merged.json');
   if (!fs.existsSync(filePath)) {
-    console.error('⚠️ Error: maramap_final_data.json not found. Please run ai-classify.js first.');
+    console.error('⚠️ Error: merged.json not found. Please run the merge step first.');
     return;
   }
 
   const rawData = fs.readFileSync(filePath, 'utf8');
   const posts = JSON.parse(rawData);
+
+  // Load media lookup (timestamp → media[]) from ingest output
+  const mediaPath = path.join(__dirname, '../01_ingest/output/media.json');
+  const mediaByTimestamp = new Map();
+  if (fs.existsSync(mediaPath)) {
+    const allMedia = JSON.parse(fs.readFileSync(mediaPath, 'utf8'));
+    allMedia.forEach(m => {
+      const key = String(m.timestamp);
+      if (!mediaByTimestamp.has(key)) mediaByTimestamp.set(key, []);
+      mediaByTimestamp.get(key).push(m);
+    });
+    console.log(`🖼️  Loaded media for ${mediaByTimestamp.size} posts from media.json`);
+  } else {
+    console.warn('⚠️  media.json not found — media field will be empty');
+  }
   console.log(`📦 Preparing to import ${posts.length} posts to Supabase (fb_posts) for user: ${userId}...`);
 
   // --- Fetch existing data if protection is enabled ---
@@ -35,7 +50,7 @@ async function importData() {
     console.log('🛡️ Protection enabled. Fetching existing records to merge metadata...');
     const { data: existingData } = await supabase
       .from('fb_posts')
-      .select('fb_timestamp, metadata, title, category, continent, is_overseas, is_hidden')
+      .select('fb_timestamp, metadata, title, category')
       .eq('user_id', userId);
     
     if (existingData) {
@@ -47,34 +62,20 @@ async function importData() {
   const formattedPosts = posts.map(p => {
     let finalMetadata = p.metadata || {};
     let finalTitle = p.title;
-    let finalCategory = p.category || 'daily';
-    let finalContinent = p.continent;
-    let finalIsOverseas = p.is_overseas || false;
-    let finalIsHidden = p.is_hidden || false;
-    
-    // Extract first line of text as the title if not already set
-    if (!finalTitle && p.text) {
-      finalTitle = p.text.split('\n')[0].trim();
-    }
+    let finalCategory = p.category;
 
     // Merge logic: If protected and record exists, merge instead of overwrite
     if (isPreserveUserEdition && existingPostsMap.has(p.timestamp.toString())) {
       const dbRecord = existingPostsMap.get(p.timestamp.toString());
       const currentDbMetadata = dbRecord.metadata || {};
-      
-      // SURGICAL MERGE: 
-      // 1. Only update participants from AI, keep everything else from DB
-      finalMetadata = { 
-        ...currentDbMetadata, 
-        participants: finalMetadata.participants || currentDbMetadata.participants 
+
+      // SURGICAL MERGE: preserve manual edits, only update AI-computed fields
+      finalMetadata = {
+        ...currentDbMetadata,
+        participants: finalMetadata.participants || currentDbMetadata.participants,
       };
-      
-      // 2. Keep core fields from DB to avoid overwriting manual fixes
-      finalTitle = dbRecord.title || finalTitle;
+      finalTitle    = dbRecord.title    || finalTitle;
       finalCategory = dbRecord.category || finalCategory;
-      finalContinent = dbRecord.continent || finalContinent;
-      finalIsOverseas = dbRecord.is_overseas ?? finalIsOverseas;
-      finalIsHidden = dbRecord.is_hidden ?? finalIsHidden;
     }
 
     return {
@@ -84,12 +85,9 @@ async function importData() {
       title: finalTitle,
       content: p.text,
       category: finalCategory,
-      tags: p.tags || [],
-      media: p.media,
-      continent: finalContinent,
-      is_overseas: finalIsOverseas,
-      is_hidden: finalIsHidden,
-      metadata: finalMetadata
+      sub_categories: p.sub_categories || [],
+      media: mediaByTimestamp.get(String(p.timestamp)) || [],
+      metadata: finalMetadata,
     };
   });
 

@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: windmill
+      POSTGRES_DB: windmill
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  windmill_server:
+    image: ghcr.io/windmill-labs/windmill:main
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:windmill@db/windmill
+      MODE: server
+      BASE_URL: http://localhost:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  windmill_worker:
+    image: ghcr.io/windmill-labs/windmill:main
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://postgres:windmill@db/windmill
+      MODE: worker
+      WORKER_GROUP: default
+      # Pipeline env vars — loaded from .env
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      USER_ID: ${USER_ID}
+      # Whitelist these vars so scripts spawned by the worker can access them
+      WHITELIST_ENV_VARS: GEMINI_API_KEY,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY,USER_ID
+    volumes:
+      # Mount the entire backend root so node_modules is accessible
+      - ..:/app:rw
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
