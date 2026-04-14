@@ -84,7 +84,7 @@ describe('StatsService', () => {
     it('should aggregate stats and upsert for known participants', async () => {
       const mockPosts = [
         {
-          category: 'marathon',
+          category: '馬拉松',
           metadata: {
             participants: [
               {
@@ -96,7 +96,7 @@ describe('StatsService', () => {
           },
         },
         {
-          category: 'marathon',
+          category: '馬拉松',
           metadata: {
             participants: [
               {
@@ -129,8 +129,8 @@ describe('StatsService', () => {
 
     it('should skip posts with no participants array', async () => {
       const mockPosts = [
-        { category: 'travel', metadata: { participants: null } },
-        { category: 'marathon', metadata: {} },
+        { category: '旅遊', metadata: { participants: null } },
+        { category: '馬拉松', metadata: {} },
       ];
 
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
@@ -145,7 +145,7 @@ describe('StatsService', () => {
     it('should skip unknown participant names', async () => {
       const mockPosts = [
         {
-          category: 'marathon',
+          category: '馬拉松',
           metadata: {
             participants: [
               { name: 'Unknown', distance: '全馬', stats: { distance_km: 42 } },
