@@ -16,6 +16,11 @@ export class UpdateFbPostDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
+  event_date?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
   content?: string;
 
   @ApiPropertyOptional()
@@ -27,6 +32,12 @@ export class UpdateFbPostDto {
   @IsString()
   @IsOptional()
   category?: string;
+
+  @ApiPropertyOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  sub_categories?: string[];
 
   @ApiPropertyOptional()
   @IsArray()
