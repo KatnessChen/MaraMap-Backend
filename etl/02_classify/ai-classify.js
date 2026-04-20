@@ -246,7 +246,6 @@ async function classifyPosts() {
     let finalResults;
     if (isPartialRun && fs.existsSync(OUTPUT_FILE)) {
       const existing = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'));
-      const updatedTs = new Set(newResults.map((p) => p.timestamp));
       // Remove old entries for re-classified timestamps, then append new ones
       const kept = existing.filter(
         (p) => !TARGET_TIMESTAMPS.includes(p.timestamp),
