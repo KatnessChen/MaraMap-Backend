@@ -26,10 +26,16 @@ Thumbs.db
 # Temporary Notes
 docs/temp
 
-# Facebook data
-fb/
+# ETL — raw inputs, generated outputs, and secrets
+etl/01_ingest/raw/
+etl/01_ingest/output/
+etl/02_classify/output/
+etl/03_analyze/00_base/output/
+etl/03_analyze/01_marathon/output/
+etl/03_analyze/02_hiking/output/
+etl/03_analyze/output/
+etl/04_import/output/
+etl/.env
 
-# Data & Log files
-maramap_final_data.json
-marathon_gps_data.json
+# Legacy (pre-reorganization)
 server_log.txt

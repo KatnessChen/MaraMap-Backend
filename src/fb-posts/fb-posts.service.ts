@@ -56,6 +56,10 @@ export class FbPostsService {
     order: 'asc' | 'desc' = 'desc',
     tag?: string,
     isAdmin: boolean = false,
+    subCategory?: string,
+    continent?: string,
+    country?: string,
+    city?: string,
   ) {
     if (!userId) throw new InternalServerErrorException('User ID is required');
     const p = Math.max(1, Number(page));
@@ -70,31 +74,23 @@ export class FbPostsService {
 
     // --- 安全過濾邏輯 ---
     if (!isAdmin) {
-      // 非管理員：強制只能看公開文章，且忽視傳入的 status 參數
       query = query.eq('is_hidden', false);
     } else {
-      // 管理員：尊重 status 參數
       if (status === 'visible') query = query.eq('is_hidden', false);
       else if (status === 'hidden') query = query.eq('is_hidden', true);
     }
 
-    if (category) {
-      const categoryMap = {
-        馬拉松: 'marathon',
-        海外馬: 'overseas_marathon',
-        國內馬: 'domestic_marathon',
-        旅遊: 'travel',
-        跑步訓練: 'training',
-        日常生活: 'daily',
-      };
-      const dbCategory = categoryMap[category] || category;
-      query = query.or(`category.eq.${category},category.eq.${dbCategory}`);
-    }
+    if (category) query = query.eq('category', category);
+    if (subCategory) query = query.contains('sub_categories', [subCategory]);
     if (startDate) query = query.gte('event_date', startDate);
     if (endDate) query = query.lte('event_date', endDate);
     if (search)
       query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
     if (tag) query = query.contains('tags', [tag]);
+    if (continent)
+      query = query.ilike('metadata->>continent', `%${continent}%`);
+    if (country) query = query.ilike('metadata->>country', `%${country}%`);
+    if (city) query = query.ilike('metadata->>city', `%${city}%`);
 
     const { data, count, error } = await query.range(offset, offset + l - 1);
     if (error) throw new InternalServerErrorException(error.message);
@@ -114,7 +110,7 @@ export class FbPostsService {
   }
 
   async fuzzySearch(userId: string, queryDto: any) {
-    const { q, category, limit = 20, offset = 0, is_overseas } = queryDto;
+    const { q, category, limit = 20, offset = 0 } = queryDto;
     const client = this.supabase.getClient();
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     // 公開搜尋強制只顯示非隱藏文章
@@ -126,7 +122,6 @@ export class FbPostsService {
       .order('event_date', { ascending: false });
     if (q) query = query.or(`title.ilike.%${q}%,content.ilike.%${q}%`);
     if (category) query = query.eq('category', category);
-    if (is_overseas !== undefined) query = query.eq('is_overseas', is_overseas);
     const { data, count, error } = await query.range(
       offset,
       offset + limit - 1,
@@ -138,9 +133,55 @@ export class FbPostsService {
     };
   }
 
+  private readonly COUNTRY_NAME_MAP: Record<string, string> = {
+    台灣: 'Taiwan',
+    '台 灣': 'Taiwan',
+    中國: 'China',
+    泰國: 'Thailand',
+    馬來西亞: 'Malaysia',
+    新加坡: 'Singapore',
+    挪威: 'Norway',
+    葡萄牙: 'Portugal',
+    格陵蘭: 'Greenland',
+    澳洲: 'Australia',
+    柬埔寨: 'Cambodia',
+    日本: 'Japan',
+    加拿大: 'Canada',
+    法國: 'France',
+    奧地利: 'Austria',
+    美國: 'United States of America',
+    英國: 'United Kingdom',
+    德國: 'Germany',
+    義大利: 'Italy',
+    西班牙: 'Spain',
+    荷蘭: 'Netherlands',
+    瑞典: 'Sweden',
+    丹麥: 'Denmark',
+    芬蘭: 'Finland',
+    瑞士: 'Switzerland',
+    比利時: 'Belgium',
+    捷克: 'Czech Republic',
+    波蘭: 'Poland',
+    匈牙利: 'Hungary',
+    希臘: 'Greece',
+    土耳其: 'Turkey',
+    以色列: 'Israel',
+    印度: 'India',
+    韓國: 'South Korea',
+    越南: 'Vietnam',
+    印尼: 'Indonesia',
+    菲律賓: 'Philippines',
+    紐西蘭: 'New Zealand',
+    南非: 'South Africa',
+    巴西: 'Brazil',
+    阿根廷: 'Argentina',
+    墨西哥: 'Mexico',
+  };
+
   async findLocations(
     userId: string,
     category?: string,
+    subCategory?: string,
     startDate?: string,
     endDate?: string,
     search?: string,
@@ -150,22 +191,14 @@ export class FbPostsService {
     const client = this.supabase.getClient();
     let query = client
       .from('fb_posts')
-      .select('id, event_date, title, category, media, metadata')
+      .select(
+        'id, event_date, title, category, sub_categories, media, metadata',
+      )
       .eq('user_id', userId)
       .eq('is_hidden', false)
       .order('event_date', { ascending: false });
-    if (category) {
-      const categoryMap = {
-        馬拉松: 'marathon',
-        海外馬: 'overseas_marathon',
-        國內馬: 'domestic_marathon',
-        旅遊: 'travel',
-        跑步訓練: 'training',
-        日常生活: 'daily',
-      };
-      const dbCategory = categoryMap[category] || category;
-      query = query.or(`category.eq.${category},category.eq.${dbCategory}`);
-    }
+    if (category) query = query.eq('category', category);
+    if (subCategory) query = query.contains('sub_categories', [subCategory]);
     if (startDate) query = query.gte('event_date', startDate);
     if (endDate) query = query.lte('event_date', endDate);
     if (search)
@@ -195,26 +228,115 @@ export class FbPostsService {
           uri: uri,
           photoCount: post.media.length,
           country: post.metadata?.country || null,
+          country_en:
+            this.COUNTRY_NAME_MAP[post.metadata?.country?.trim()] ||
+            post.metadata?.country ||
+            null,
         };
       })
       .filter((p) => p !== null);
   }
 
-  async getCategories(userId: string) {
+  async findByCountry(userId: string, country: string) {
     if (!userId) return [];
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('fb_posts')
-      .select('category')
+      .select('id, event_date, title, category, metadata')
       .eq('user_id', userId)
-      .eq('is_hidden', false);
+      .eq('is_hidden', false)
+      .order('event_date', { ascending: true });
+    if (error) return [];
+    const normalized = country.trim().replace(/\s+/g, '');
+    return (data || [])
+      .filter((post) => {
+        const metaCountry = (post.metadata?.country || '')
+          .trim()
+          .replace(/\s+/g, '');
+        return metaCountry === normalized;
+      })
+      .map((post) => ({
+        postId: post.id,
+        title: post.title,
+        date: post.event_date,
+        category: post.category,
+        raceName: post.metadata?.race_name || null,
+        city: post.metadata?.city || null,
+        participants: (post.metadata?.participants || []).map((p: any) => ({
+          name: p.name,
+          distance: p.distance || null,
+          distanceKm: p.stats?.distance_km || null,
+          time: p.time || null,
+        })),
+      }));
+  }
+
+  async findByTripId(userId: string, tripId: string) {
+    if (!userId) return [];
+    const publicUrl = process.env.R2_PUBLIC_URL || '';
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('id, event_date, title, category, cover_image, metadata, trip_id')
+      .eq('user_id', userId)
+      .eq('trip_id', tripId)
+      .eq('is_hidden', false)
+      .order('event_date', { ascending: true });
+    if (error) return [];
+    return (data || []).map((post) => {
+      let cover = post.cover_image;
+      if (cover && !cover.startsWith('http')) cover = `${publicUrl}/${cover}`;
+      return {
+        postId: post.id,
+        title: post.title,
+        date: post.event_date,
+        category: post.category,
+        country: post.metadata?.country || null,
+        city: post.metadata?.city || null,
+        coverImage: cover || null,
+        isPrimary: post.id === tripId,
+      };
+    });
+  }
+
+  async getCategories(userId: string) {
+    if (!userId) return [];
+    const VALID_CATEGORIES = ['馬拉松', '旅遊', '登山'];
+    const SUB_CATEGORY_MAP: Record<string, string[]> = {
+      馬拉松: ['海外馬', '國內馬', '超馬(44K+)', '高山馬', '七大馬', '普查'],
+      旅遊: [],
+      登山: ['大百岳', '小百岳', '海外登山'],
+    };
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('category, sub_categories')
+      .eq('user_id', userId)
+      .eq('is_hidden', false)
+      .in('category', VALID_CATEGORIES);
     if (error) throw error;
-    const stats = (data || []).reduce((acc, curr) => {
-      const cat = curr.category || '未分類';
-      acc[cat] = (acc[cat] || 0) + 1;
-      return acc;
-    }, {});
-    return Object.keys(stats).map((name) => ({ name, count: stats[name] }));
+
+    // Count by category and sub_category
+    const catStats: Record<string, number> = {};
+    const subStats: Record<string, Record<string, number>> = {};
+    for (const row of data || []) {
+      const cat = row.category;
+      catStats[cat] = (catStats[cat] || 0) + 1;
+      if (!subStats[cat]) subStats[cat] = {};
+      for (const sub of row.sub_categories || []) {
+        subStats[cat][sub] = (subStats[cat][sub] || 0) + 1;
+      }
+    }
+
+    return VALID_CATEGORIES.filter((name) => catStats[name] !== undefined).map(
+      (name) => ({
+        name,
+        count: catStats[name],
+        sub_categories: (SUB_CATEGORY_MAP[name] || [])
+          .filter((sub) => subStats[name]?.[sub] !== undefined)
+          .map((sub) => ({ name: sub, count: subStats[name][sub] })),
+      }),
+    );
   }
 
   async findOne(userId: string, id: string, isAdmin: boolean = false) {

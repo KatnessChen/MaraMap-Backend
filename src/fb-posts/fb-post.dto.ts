@@ -1,11 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsOptional,
-  IsString,
-  IsBoolean,
-  IsNumber,
-  Min,
-} from 'class-validator';
+import { IsOptional, IsString, IsNumber, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class ParticipantStatsDto {
@@ -19,6 +13,7 @@ export class MarathonParticipantDto {
   name: string;
   time: string | null;
   distance: string | null;
+  is_pb: boolean;
   stats: ParticipantStatsDto;
 }
 
@@ -40,9 +35,9 @@ export class FbPostDto {
   title: string;
   content: string;
   category: string;
+  sub_categories: string[];
   tags: string[];
   is_hidden: boolean;
-  is_overseas: boolean;
   continent: string;
   cover_image: string | null;
   metadata: MarathonMetadataDto | null;
@@ -73,12 +68,6 @@ export class FuzzySearchDto {
   @IsOptional()
   @IsString()
   continent?: string;
-
-  @ApiPropertyOptional({ description: 'Filter by overseas status' })
-  @IsOptional()
-  @Transform(({ value }) => value === 'true' || value === true)
-  @IsBoolean()
-  is_overseas?: boolean;
 
   @ApiPropertyOptional({ description: 'Limit number of results', default: 20 })
   @IsOptional()

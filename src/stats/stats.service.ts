@@ -85,7 +85,7 @@ export class StatsService {
         }
 
         // 2. Calculated Counts (ONLY for marathon category)
-        if (category === 'marathon') {
+        if (category === '馬拉松') {
           if (distanceType.includes('超馬') || pStats.distance_km > 45) {
             current.calculated_fm += 1;
             current.calculated_um += 1;

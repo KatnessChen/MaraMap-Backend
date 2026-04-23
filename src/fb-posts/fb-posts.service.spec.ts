@@ -22,6 +22,7 @@ describe('FbPostsService', () => {
     ilike: jest.fn().mockReturnThis(),
     contains: jest.fn().mockReturnThis(),
     neq: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
     single: jest.fn().mockReturnThis(),
     update: jest.fn().mockReturnThis(),
     // Make thenable to support await
@@ -69,8 +70,9 @@ describe('FbPostsService', () => {
 
       expect(mockSupabaseClient.from).toHaveBeenCalledWith('fb_posts');
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('user_id', userId);
+      expect(mockSupabaseClient.eq).toHaveBeenCalledWith('category', '馬拉松');
       expect(mockSupabaseClient.or).toHaveBeenCalledWith(
-        expect.stringContaining('category.eq.馬拉松'),
+        'content.ilike.%race%,title.ilike.%race%',
       );
       expect(mockSupabaseClient.range).toHaveBeenCalledWith(0, 9);
     });
@@ -234,9 +236,9 @@ describe('FbPostsService', () => {
 
     it('should aggregate categories and return counts', async () => {
       const mockData = [
-        { category: 'marathon' },
-        { category: 'marathon' },
-        { category: 'travel' },
+        { category: '馬拉松', sub_categories: [] },
+        { category: '馬拉松', sub_categories: [] },
+        { category: '旅遊', sub_categories: [] },
       ];
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: mockData, error: null }),
@@ -245,8 +247,8 @@ describe('FbPostsService', () => {
       const result = await service.getCategories('user-123');
       expect(result).toEqual(
         expect.arrayContaining([
-          { name: 'marathon', count: 2 },
-          { name: 'travel', count: 1 },
+          expect.objectContaining({ name: '馬拉松', count: 2 }),
+          expect.objectContaining({ name: '旅遊', count: 1 }),
         ]),
       );
     });

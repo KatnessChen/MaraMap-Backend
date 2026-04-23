@@ -59,6 +59,10 @@ describe('FbPostsController', () => {
         'desc',
         undefined,
         'user-1',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
       );
       expect(service.findAll).toHaveBeenCalledWith(
         'user-1',
@@ -72,6 +76,10 @@ describe('FbPostsController', () => {
         'desc',
         undefined,
         false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
       );
     });
   });
@@ -107,6 +115,7 @@ describe('FbPostsController', () => {
     it('should call service.findLocations', async () => {
       await controller.getLocations(
         '馬拉松',
+        undefined,
         '2026-01-01',
         '2026-01-31',
         'race',
@@ -115,6 +124,7 @@ describe('FbPostsController', () => {
       expect(service.findLocations).toHaveBeenCalledWith(
         'user-1',
         '馬拉松',
+        undefined,
         '2026-01-01',
         '2026-01-31',
         'race',
