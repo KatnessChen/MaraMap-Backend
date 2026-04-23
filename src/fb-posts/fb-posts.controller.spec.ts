@@ -59,6 +59,10 @@ describe('FbPostsController', () => {
         'desc',
         undefined,
         'user-1',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
       );
       expect(service.findAll).toHaveBeenCalledWith(
         'user-1',
@@ -72,6 +76,10 @@ describe('FbPostsController', () => {
         'desc',
         undefined,
         false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
       );
     });
   });
