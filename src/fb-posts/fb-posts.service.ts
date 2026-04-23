@@ -56,6 +56,10 @@ export class FbPostsService {
     order: 'asc' | 'desc' = 'desc',
     tag?: string,
     isAdmin: boolean = false,
+    subCategory?: string,
+    continent?: string,
+    country?: string,
+    city?: string,
   ) {
     if (!userId) throw new InternalServerErrorException('User ID is required');
     const p = Math.max(1, Number(page));
@@ -70,20 +74,23 @@ export class FbPostsService {
 
     // --- 安全過濾邏輯 ---
     if (!isAdmin) {
-      // 非管理員：強制只能看公開文章，且忽視傳入的 status 參數
       query = query.eq('is_hidden', false);
     } else {
-      // 管理員：尊重 status 參數
       if (status === 'visible') query = query.eq('is_hidden', false);
       else if (status === 'hidden') query = query.eq('is_hidden', true);
     }
 
     if (category) query = query.eq('category', category);
+    if (subCategory) query = query.contains('sub_categories', [subCategory]);
     if (startDate) query = query.gte('event_date', startDate);
     if (endDate) query = query.lte('event_date', endDate);
     if (search)
       query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
     if (tag) query = query.contains('tags', [tag]);
+    if (continent)
+      query = query.ilike('metadata->>continent', `%${continent}%`);
+    if (country) query = query.ilike('metadata->>country', `%${country}%`);
+    if (city) query = query.ilike('metadata->>city', `%${city}%`);
 
     const { data, count, error } = await query.range(offset, offset + l - 1);
     if (error) throw new InternalServerErrorException(error.message);
@@ -264,11 +271,39 @@ export class FbPostsService {
       }));
   }
 
+  async findByTripId(userId: string, tripId: string) {
+    if (!userId) return [];
+    const publicUrl = process.env.R2_PUBLIC_URL || '';
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('id, event_date, title, category, cover_image, metadata, trip_id')
+      .eq('user_id', userId)
+      .eq('trip_id', tripId)
+      .eq('is_hidden', false)
+      .order('event_date', { ascending: true });
+    if (error) return [];
+    return (data || []).map((post) => {
+      let cover = post.cover_image;
+      if (cover && !cover.startsWith('http')) cover = `${publicUrl}/${cover}`;
+      return {
+        postId: post.id,
+        title: post.title,
+        date: post.event_date,
+        category: post.category,
+        country: post.metadata?.country || null,
+        city: post.metadata?.city || null,
+        coverImage: cover || null,
+        isPrimary: post.id === tripId,
+      };
+    });
+  }
+
   async getCategories(userId: string) {
     if (!userId) return [];
     const VALID_CATEGORIES = ['馬拉松', '旅遊', '登山'];
     const SUB_CATEGORY_MAP: Record<string, string[]> = {
-      馬拉松: ['海外馬', '國內馬', '超馬(44K+)', '高山馬', '七大馬'],
+      馬拉松: ['海外馬', '國內馬', '超馬(44K+)', '高山馬', '七大馬', '普查'],
       旅遊: [],
       登山: ['大百岳', '小百岳', '海外登山'],
     };

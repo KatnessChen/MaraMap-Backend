@@ -46,6 +46,10 @@ export class FbPostsController {
     @Query('order') order: 'asc' | 'desc' = 'desc',
     @Query('tag') tag?: string,
     @Query('user_id') userId?: string,
+    @Query('sub_category') subCategory?: string,
+    @Query('continent') continent?: string,
+    @Query('country') country?: string,
+    @Query('city') city?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findAll(
@@ -59,7 +63,11 @@ export class FbPostsController {
       status,
       order,
       tag,
-      req.isAdmin, // 傳入管理員權限標記
+      req.isAdmin,
+      subCategory,
+      continent,
+      country,
+      city,
     );
   }
 
@@ -126,6 +134,17 @@ export class FbPostsController {
       endDate,
       search,
     );
+  }
+
+  @Public()
+  @Get('posts/trip/:tripId')
+  @ApiOperation({ summary: '取得同一趟旅行的所有貼文' })
+  async getTripPosts(
+    @Param('tripId') tripId: string,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.findByTripId(targetUserId, tripId);
   }
 
   @Public()
