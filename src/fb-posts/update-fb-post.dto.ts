@@ -31,7 +31,7 @@ export class UpdateFbPostDto {
   @ApiPropertyOptional()
   @IsBoolean()
   @IsOptional()
-  is_pb?: boolean;
+  is_personal_best?: boolean;
 
   @ApiPropertyOptional()
   @IsString()
@@ -64,4 +64,9 @@ export class UpdateFbPostDto {
   @IsObject()
   @IsOptional()
   metadata?: any;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  is_ai_editing_locked?: boolean;
 }

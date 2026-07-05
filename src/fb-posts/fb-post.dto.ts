@@ -13,7 +13,7 @@ export class MarathonParticipantDto {
   name: string;
   time: string | null;
   distance: string | null;
-  is_pb: boolean;
+  is_personal_best: boolean;
   stats: ParticipantStatsDto;
 }
 

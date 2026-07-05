@@ -2,6 +2,7 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateFbPostDto } from './update-fb-post.dto';
@@ -361,6 +362,17 @@ export class FbPostsService {
   async update(userId: string, id: string, updateDto: UpdateFbPostDto) {
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     const client = this.supabase.getClient();
+
+    const { data: current } = await client
+      .from('fb_posts')
+      .select('is_ai_editing_locked')
+      .eq('user_id', userId)
+      .eq('id', id)
+      .single();
+    if (current?.is_ai_editing_locked && updateDto.is_ai_editing_locked !== false) {
+      throw new ForbiddenException('此文章已鎖定，禁止修改。');
+    }
+
     const { data, error } = await client
       .from('fb_posts')
       .update(updateDto)
