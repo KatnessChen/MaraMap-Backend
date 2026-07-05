@@ -421,6 +421,7 @@ export class FbPostsService {
       date: string;
       postId: string;
       country: string | null;
+      distanceKm: number | null;
     };
     type TimelineEntry = {
       date: string;
@@ -456,7 +457,7 @@ export class FbPostsService {
         // Update current best if faster
         const existing = pData.bests[p.distance];
         if (!existing || timeSeconds < existing.timeSeconds) {
-          pData.bests[p.distance] = { time: p.time, timeSeconds, raceName, date: post.event_date, postId: post.id, country };
+          pData.bests[p.distance] = { time: p.time, timeSeconds, raceName, date: post.event_date, postId: post.id, country, distanceKm: p.stats?.distance_km ?? null };
         }
 
         // Add to timeline if post-level OR participant-level PB flag
@@ -490,7 +491,7 @@ export class FbPostsService {
         bests: Object.fromEntries(
           Object.entries(pData.bests).map(([dist, b]) => [
             dist,
-            { time: b.time, raceName: b.raceName, date: b.date, postId: b.postId, country: b.country },
+            { time: b.time, raceName: b.raceName, date: b.date, postId: b.postId, country: b.country, distanceKm: b.distanceKm },
           ]),
         ),
         timeline: pData.timeline,
