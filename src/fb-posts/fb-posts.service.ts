@@ -3,13 +3,19 @@ import {
   InternalServerErrorException,
   NotFoundException,
   ForbiddenException,
+  Inject,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateFbPostDto } from './update-fb-post.dto';
 
 @Injectable()
 export class FbPostsService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
 
   /**
    * 核心處理：URL 正規化與主圖自動回退邏輯
@@ -381,6 +387,7 @@ export class FbPostsService {
       .select()
       .single();
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(`pb:${userId}`);
     return this.normalizePost(data, publicUrl);
   }
 
@@ -404,6 +411,9 @@ export class FbPostsService {
 
   async findPersonalBests(userId: string) {
     if (!userId) return { participants: {} };
+    const cacheKey = `pb:${userId}`;
+    const cached = await this.cacheManager.get(cacheKey);
+    if (cached) return cached;
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('fb_posts')
@@ -498,6 +508,7 @@ export class FbPostsService {
       };
     }
 
+    await this.cacheManager.set(cacheKey, { participants: result });
     return { participants: result };
   }
 
