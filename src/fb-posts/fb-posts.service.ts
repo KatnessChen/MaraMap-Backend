@@ -232,6 +232,8 @@ export class FbPostsService {
             this.COUNTRY_NAME_MAP[post.metadata?.country?.trim()] ||
             post.metadata?.country ||
             null,
+          continent: post.metadata?.continent || null,
+          city: post.metadata?.city || null,
         };
       })
       .filter((p) => p !== null);
