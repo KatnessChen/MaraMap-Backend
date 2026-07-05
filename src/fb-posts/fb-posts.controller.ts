@@ -83,6 +83,14 @@ export class FbPostsController {
   }
 
   @Public()
+  @Get('personal-best')
+  @ApiOperation({ summary: '取得個人最佳成績（各距離 + 時間線）' })
+  async getPersonalBest(@Query('user_id') userId?: string) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.findPersonalBests(targetUserId);
+  }
+
+  @Public()
   @Get('posts/:id')
   @ApiOperation({ summary: '取得單篇文章詳情' })
   async getPostById(

@@ -384,6 +384,122 @@ export class FbPostsService {
     return this.normalizePost(data, publicUrl);
   }
 
+  private parseTimeToSeconds(time: string): number | null {
+    if (!time) return null;
+    const parts = time.split(':').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return null;
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+
+  private formatDelta(diffSeconds: number): string {
+    const abs = Math.abs(diffSeconds);
+    const h = Math.floor(abs / 3600);
+    const m = Math.floor((abs % 3600) / 60);
+    const s = abs % 60;
+    const sign = diffSeconds < 0 ? '-' : '+';
+    const mm = String(m).padStart(2, '0');
+    const ss = String(s).padStart(2, '0');
+    return h > 0 ? `${sign}${h}:${mm}:${ss}` : `${sign}${mm}:${ss}`;
+  }
+
+  async findPersonalBests(userId: string) {
+    if (!userId) return { participants: {} };
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('id, event_date, title, is_personal_best, metadata')
+      .eq('user_id', userId)
+      .eq('is_hidden', false)
+      .eq('category', '馬拉松')
+      .order('event_date', { ascending: true });
+    if (error || !data) return { participants: {} };
+
+    type BestEntry = {
+      time: string;
+      timeSeconds: number;
+      raceName: string | null;
+      date: string;
+      postId: string;
+      country: string | null;
+    };
+    type TimelineEntry = {
+      date: string;
+      raceName: string | null;
+      country: string | null;
+      distance: string;
+      time: string;
+      postId: string;
+      delta: string | null;
+    };
+    type ParticipantData = {
+      bests: Record<string, BestEntry>;
+      timeline: TimelineEntry[];
+    };
+
+    const participantMap: Record<string, ParticipantData> = {};
+
+    for (const post of data) {
+      const participants: any[] = post.metadata?.participants || [];
+      const raceName: string | null = post.metadata?.race_name || post.title || null;
+      const country: string | null = post.metadata?.country || null;
+      const isPostPB: boolean = post.is_personal_best === true;
+
+      for (const p of participants) {
+        if (!p.name || !p.time || !p.distance) continue;
+        const name: string = p.name;
+        if (!participantMap[name]) participantMap[name] = { bests: {}, timeline: [] };
+        const pData = participantMap[name];
+
+        const timeSeconds = this.parseTimeToSeconds(p.time);
+        if (timeSeconds === null) continue;
+
+        // Update current best if faster
+        const existing = pData.bests[p.distance];
+        if (!existing || timeSeconds < existing.timeSeconds) {
+          pData.bests[p.distance] = { time: p.time, timeSeconds, raceName, date: post.event_date, postId: post.id, country };
+        }
+
+        // Add to timeline if post-level OR participant-level PB flag
+        if (isPostPB || p.is_personal_best === true) {
+          pData.timeline.push({ date: post.event_date, raceName, country, distance: p.distance, time: p.time, postId: post.id, delta: null });
+        }
+      }
+    }
+
+    // Compute delta per participant per distance (data is already ASC by date)
+    for (const pData of Object.values(participantMap)) {
+      const prevByDistance: Record<string, number> = {};
+      pData.timeline = pData.timeline.map((entry) => {
+        const timeSeconds = this.parseTimeToSeconds(entry.time);
+        const prev = prevByDistance[entry.distance];
+        let delta: string | null = null;
+        if (prev !== undefined && timeSeconds !== null) {
+          const diff = timeSeconds - prev;
+          if (diff !== 0) delta = this.formatDelta(diff);
+        }
+        if (timeSeconds !== null) prevByDistance[entry.distance] = timeSeconds;
+        return { ...entry, delta };
+      });
+    }
+
+    // Strip internal timeSeconds from bests
+    const result: Record<string, { bests: Record<string, Omit<BestEntry, 'timeSeconds'>>; timeline: TimelineEntry[] }> = {};
+    for (const [name, pData] of Object.entries(participantMap)) {
+      if (pData.timeline.length === 0 && Object.keys(pData.bests).length === 0) continue;
+      result[name] = {
+        bests: Object.fromEntries(
+          Object.entries(pData.bests).map(([dist, b]) => [
+            dist,
+            { time: b.time, raceName: b.raceName, date: b.date, postId: b.postId, country: b.country },
+          ]),
+        ),
+        timeline: pData.timeline,
+      };
+    }
+
+    return { participants: result };
+  }
+
   async remove(userId: string, id: string) {
     const client = this.supabase.getClient();
     const { data, error } = await client
