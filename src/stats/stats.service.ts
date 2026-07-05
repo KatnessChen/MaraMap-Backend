@@ -22,17 +22,43 @@ export class StatsService {
    */
   async getParticipantStats(name: string) {
     const client = this.supabase.getClient();
-    const { data, error } = await client
-      .from('participant_stats')
-      .select('*')
-      .ilike('participant_name', name)
-      .single();
+    const [statsResult, countryCount] = await Promise.all([
+      client
+        .from('participant_stats')
+        .select('*')
+        .ilike('participant_name', name)
+        .single(),
+      this.getCountryCount(),
+    ]);
 
-    if (error) {
-      this.logger.error(`Error fetching stats for ${name}: ${error.message}`);
+    if (statsResult.error) {
+      this.logger.error(
+        `Error fetching stats for ${name}: ${statsResult.error.message}`,
+      );
       return null;
     }
-    return data;
+    return { ...statsResult.data, country_count: countryCount };
+  }
+
+  async getCountryCount(): Promise<number> {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('metadata')
+      .eq('is_hidden', false)
+      .not('metadata', 'is', null);
+
+    if (error) {
+      this.logger.error(`Error fetching country count: ${error.message}`);
+      return 0;
+    }
+
+    const countries = new Set(
+      (data || [])
+        .map((p) => (p.metadata?.country as string | undefined)?.trim())
+        .filter(Boolean),
+    );
+    return countries.size;
   }
 
   /**
