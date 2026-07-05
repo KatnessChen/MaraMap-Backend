@@ -137,6 +137,8 @@ export class FbPostsService {
     台灣: 'Taiwan',
     '台 灣': 'Taiwan',
     中國: 'China',
+    香港: 'Hong Kong',
+    澳門: 'Macao',
     泰國: 'Thailand',
     馬來西亞: 'Malaysia',
     新加坡: 'Singapore',
