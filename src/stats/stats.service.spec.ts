@@ -11,6 +11,8 @@ describe('StatsService', () => {
     ilike: jest.fn().mockReturnThis(),
     single: jest.fn().mockReturnThis(),
     neq: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    not: jest.fn().mockReturnThis(),
     upsert: jest.fn().mockReturnThis(),
     then: jest.fn(function (resolve) {
       return resolve({ data: null, error: null });
@@ -45,6 +47,11 @@ describe('StatsService', () => {
   describe('getParticipantStats', () => {
     it('should return stats for a known participant', async () => {
       const mockData = { participant_name: 'Davis', fm_count: 5 };
+      // getCountryCount's query runs first (inside getParticipantStats's Promise.all)
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], error: null }),
+      );
+      // participant_stats query runs second
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: mockData, error: null }),
       );
@@ -56,10 +63,15 @@ describe('StatsService', () => {
         'participant_name',
         'Davis',
       );
-      expect(result).toEqual(mockData);
+      expect(result).toMatchObject(mockData);
     });
 
     it('should return null when Supabase returns an error', async () => {
+      // getCountryCount's query runs first
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], error: null }),
+      );
+      // participant_stats query returns an error
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: null, error: { message: 'Not found' } }),
       );

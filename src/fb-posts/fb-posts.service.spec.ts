@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { FbPostsService } from './fb-posts.service';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -40,6 +41,10 @@ describe('FbPostsService', () => {
           useValue: {
             getClient: jest.fn().mockReturnValue(mockSupabaseClient),
           },
+        },
+        {
+          provide: CACHE_MANAGER,
+          useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() },
         },
       ],
     }).compile();
@@ -94,8 +99,13 @@ describe('FbPostsService', () => {
   describe('update', () => {
     it('should update a post', async () => {
       const updateDto = { title: 'New' };
+      // First call: lock check query
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
-        resolve({ data: { id: '1', ...updateDto }, error: null }),
+        resolve({ data: { is_ai_editing_locked: false }, error: null }),
+      );
+      // Second call: actual update
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: '1', media: [], ...updateDto }, error: null }),
       );
 
       const result = await service.update('user-123', '1', updateDto);

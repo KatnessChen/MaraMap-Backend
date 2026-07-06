@@ -120,6 +120,7 @@ describe('FbPostsController', () => {
         '2026-01-31',
         'race',
         'user-1',
+        undefined,
       );
       expect(service.findLocations).toHaveBeenCalledWith(
         'user-1',
@@ -128,6 +129,7 @@ describe('FbPostsController', () => {
         '2026-01-01',
         '2026-01-31',
         'race',
+        true,
       );
     });
   });
