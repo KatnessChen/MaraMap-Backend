@@ -132,6 +132,7 @@ export class FbPostsController {
     @Query('endDate') endDate?: string,
     @Query('search') search?: string,
     @Query('user_id') userId?: string,
+    @Query('geoOnly') geoOnly?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findLocations(
@@ -141,6 +142,7 @@ export class FbPostsController {
       startDate,
       endDate,
       search,
+      geoOnly !== 'false',
     );
   }
 

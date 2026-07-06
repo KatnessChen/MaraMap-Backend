@@ -194,6 +194,7 @@ export class FbPostsService {
     startDate?: string,
     endDate?: string,
     search?: string,
+    geoOnly: boolean = true,
   ) {
     if (!userId) return [];
     const publicUrl = process.env.R2_PUBLIC_URL || '';
@@ -216,26 +217,26 @@ export class FbPostsService {
     if (error) return [];
     return (data || [])
       .map((post) => {
-        if (!Array.isArray(post.media)) return null;
-        const rep = post.media.find(
+        const media = Array.isArray(post.media) ? post.media : [];
+        const rep = media.find(
           (m) =>
             m.lat !== null && m.lng !== null && !isNaN(m.lat) && !isNaN(m.lng),
         );
-        if (!rep) return null;
+        if (geoOnly && !rep) return null;
         const uri =
-          rep.uri && !rep.uri.startsWith('http')
+          rep?.uri && !rep.uri.startsWith('http')
             ? `${publicUrl}/${rep.uri}`
-            : rep.uri;
+            : rep?.uri || null;
         return {
           id: post.id,
           postId: post.id,
-          lat: rep.lat,
-          lng: rep.lng,
+          lat: rep?.lat ?? null,
+          lng: rep?.lng ?? null,
           title: post.title,
           date: post.event_date,
           cat: post.category,
           uri: uri,
-          photoCount: post.media.length,
+          photoCount: media.length,
           country: post.metadata?.country || null,
           country_en:
             this.COUNTRY_NAME_MAP[post.metadata?.country?.trim()] ||
