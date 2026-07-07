@@ -289,7 +289,7 @@ export class FbPostsService {
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('fb_posts')
-      .select('id, event_date, title, category, cover_image, metadata, trip_id')
+      .select('id, event_date, title, category, cover_image, media, metadata, trip_id')
       .eq('user_id', userId)
       .eq('trip_id', tripId)
       .eq('is_hidden', false)
@@ -297,6 +297,11 @@ export class FbPostsService {
     if (error) return [];
     return (data || []).map((post) => {
       let cover = post.cover_image;
+      if (!cover || cover.trim() === '') {
+        const media = Array.isArray(post.media) ? post.media : [];
+        const firstPhoto = media.find((m) => m.type === 'photo' || m.type === 'image');
+        cover = firstPhoto?.uri ?? media[0]?.uri ?? null;
+      }
       if (cover && !cover.startsWith('http')) cover = `${publicUrl}/${cover}`;
       return {
         postId: post.id,
