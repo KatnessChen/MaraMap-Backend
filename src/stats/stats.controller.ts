@@ -3,6 +3,8 @@ import {
   Get,
   Post,
   Query,
+  Body,
+  Headers,
   BadRequestException,
 } from '@nestjs/common';
 import { StatsService } from './stats.service';
@@ -25,6 +27,25 @@ export class StatsController {
       return { message: `No stats found for participant: ${participant}` };
     }
     return data;
+  }
+
+  @Post('visit')
+  @ApiOperation({ summary: 'Record a page visit (human vs bot auto-detected)' })
+  async recordVisit(
+    @Body('path') path: string,
+    @Headers('user-agent') userAgent: string,
+    @Headers('origin') origin: string,
+  ) {
+    if (!path) throw new BadRequestException('path is required');
+    if (/localhost|127\.0\.0\.1/.test(origin || '')) return { ok: true, skipped: true };
+    await this.statsService.recordVisit(path, userAgent || '');
+    return { ok: true };
+  }
+
+  @Get('visits')
+  @ApiOperation({ summary: 'Get page view counts (total + per page)' })
+  async getVisits() {
+    return this.statsService.getVisits();
   }
 
   @Post('refresh')
