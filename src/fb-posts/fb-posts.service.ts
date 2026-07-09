@@ -237,6 +237,7 @@ export class FbPostsService {
           cat: post.category,
           uri: uri,
           photoCount: media.length,
+          sub_cats: Array.isArray(post.sub_categories) ? post.sub_categories : [],
           country: post.metadata?.country || null,
           country_en:
             this.COUNTRY_NAME_MAP[post.metadata?.country?.trim()] ||
