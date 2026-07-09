@@ -128,8 +128,8 @@ export class FbPostsController {
   async getLocations(
     @Query('category') category?: string,
     @Query('sub_category') subCategory?: string,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
+    @Query('start_date') startDate?: string,
+    @Query('end_date') endDate?: string,
     @Query('search') search?: string,
     @Query('user_id') userId?: string,
     @Query('geoOnly') geoOnly?: string,
