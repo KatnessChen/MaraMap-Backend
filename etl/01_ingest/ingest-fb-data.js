@@ -33,6 +33,9 @@ const OUTPUT_DIR = path.join(__dirname, './output', BATCH);
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 const POSTS_OUTPUT = path.join(OUTPUT_DIR, 'posts.json');
 const MEDIA_OUTPUT = path.join(OUTPUT_DIR, 'media.json');
+// Sidecar list of the timestamps that came from album posts, so downstream
+// partial re-runs can target exactly these without re-processing the whole batch.
+const ALBUM_TS_OUTPUT = path.join(OUTPUT_DIR, 'album_timestamps.json');
 
 // Fix Facebook-specific Latin-1 encoding issues (mojibake)
 function fixEncoding(str) {
@@ -42,6 +45,73 @@ function fixEncoding(str) {
   } catch (e) {
     return str;
   }
+}
+
+// Parse a leading Taiwanese ROC (民國) date from an album name, e.g.
+// "105.2.28 日本東京馬拉松" → 2016-02-28, "104.6.29~104.7.15 ..." → 2015-06-29
+// (range start). ROC year + 1911 = Gregorian year. Returns a UTC-noon epoch (in
+// seconds) so the derived date string lands on the intended calendar day, else
+// null. This is the true event date; cover/photo/edit times are upload times and
+// can be days-to-months late, or the wrong year for albums re-covered later.
+function parseRocDateToTimestamp(name) {
+  if (!name) return null;
+  const m = name.match(/^\s*(\d{2,3})\.(\d{1,2})\.(\d{1,2})/);
+  if (!m) return null;
+  const rocYear = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  if (rocYear < 1 || rocYear > 199) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > 31) return null;
+  return Math.floor(Date.UTC(rocYear + 1911, month - 1, day, 12, 0, 0) / 1000);
+}
+
+// Build a media record from a Facebook media object (the shape found both at
+// attachment.data[].media in the main feed and at album photos[]/cover_photo).
+// postTimestamp is the FK back to the owning post.
+function buildMediaItem(media, postTimestamp) {
+  const mediaItem = {
+    timestamp: postTimestamp,
+    uri: media.uri,
+    type:
+      media.media_metadata && media.media_metadata.video_metadata
+        ? 'video'
+        : 'photo',
+    lat: null,
+    lng: null,
+    taken_at: media.creation_timestamp || postTimestamp,
+  };
+
+  const metadata = media.media_metadata;
+  if (metadata) {
+    const exif = (
+      metadata.photo_metadata ||
+      metadata.video_metadata ||
+      {}
+    ).exif_data;
+    if (exif && exif[0] && exif[0].latitude && exif[0].longitude) {
+      mediaItem.lat = exif[0].latitude;
+      mediaItem.lng = exif[0].longitude;
+    }
+  }
+
+  return mediaItem;
+}
+
+// "新增 N 張相片到相簿" posts are NOT in your_posts__check_ins__photos_and_videos_1.json.
+// Facebook's DYI export stores each album as its own file under posts/album/*.json.
+// Find them all so album posts (e.g. race photo albums) aren't silently dropped.
+function findAlbumJsons(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const entries = fs.readdirSync(dir, { recursive: true });
+  return entries
+    .filter(
+      (entry) =>
+        entry.includes(
+          `your_facebook_activity${path.sep}posts${path.sep}album${path.sep}`,
+        ) && entry.endsWith('.json'),
+    )
+    .map((entry) => path.join(dir, entry));
 }
 
 console.log('🚀 Starting Facebook data ingest...');
@@ -84,38 +154,66 @@ try {
         if (!attachment.data) return;
         attachment.data.forEach((item) => {
           if (!item.media) return;
-
-          const mediaItem = {
-            timestamp: post.timestamp, // FK back to post
-            uri: item.media.uri,
-            type:
-              item.media.media_metadata &&
-              item.media.media_metadata.video_metadata
-                ? 'video'
-                : 'photo',
-            lat: null,
-            lng: null,
-            taken_at: item.media.creation_timestamp || post.timestamp,
-          };
-
-          const metadata = item.media.media_metadata;
-          if (metadata) {
-            const exif = (
-              metadata.photo_metadata ||
-              metadata.video_metadata ||
-              {}
-            ).exif_data;
-            if (exif && exif[0] && exif[0].latitude && exif[0].longitude) {
-              mediaItem.lat = exif[0].latitude;
-              mediaItem.lng = exif[0].longitude;
-            }
-          }
-
-          mediaResult.push(mediaItem);
+          mediaResult.push(buildMediaItem(item.media, post.timestamp));
         });
       });
     }
   });
+
+  // --- Album posts (posts/album/*.json) — separate from the main feed file ---
+  // Keep a set of timestamps already used by the main feed so an album's derived
+  // timestamp never collides: media is FK'd by timestamp, and the DB unique key is
+  // (user_id, fb_timestamp), so a collision would cross-link media or drop a post.
+  const usedTimestamps = new Set(postsResult.map((p) => p.timestamp));
+  const albumFiles = findAlbumJsons(RAW_BATCH_DIR);
+  const albumTimestamps = [];
+  let albumCount = 0;
+
+  albumFiles.forEach((albumPath) => {
+    const album = JSON.parse(fs.readFileSync(albumPath, 'utf8'));
+    const photos = Array.isArray(album.photos) ? album.photos : [];
+
+    const text = fixEncoding(album.description || '');
+    const title = fixEncoding(album.name || '');
+
+    // Album JSON has no post timestamp. Prefer the ROC date in the album name
+    // (accurate event date); else approximate with the cover photo's creation
+    // time, the earliest photo, or the last edit time.
+    const photoTimestamps = photos
+      .map((p) => p.creation_timestamp)
+      .filter(Boolean);
+    let timestamp =
+      parseRocDateToTimestamp(title) ||
+      (album.cover_photo && album.cover_photo.creation_timestamp) ||
+      (photoTimestamps.length ? Math.min(...photoTimestamps) : null) ||
+      album.last_modified_timestamp;
+
+    if (!timestamp) return;          // nothing to anchor the post to
+    if (!title && !text && !photos.length) return; // truly empty
+
+    // Ensure uniqueness (see note above); nudge forward by whole seconds if taken.
+    while (usedTimestamps.has(timestamp)) timestamp += 1;
+    usedTimestamps.add(timestamp);
+
+    postsResult.push({
+      timestamp,
+      date: new Date(timestamp * 1000).toISOString().split('T')[0],
+      text,
+      title,
+    });
+
+    photos.forEach((photo) => {
+      if (!photo.uri) return;
+      mediaResult.push(buildMediaItem(photo, timestamp));
+    });
+    albumTimestamps.push(timestamp);
+    albumCount += 1;
+  });
+
+  if (albumCount > 0) {
+    console.log(`   📸 Included ${albumCount} album post(s) from posts/album/`);
+  }
+  fs.writeFileSync(ALBUM_TS_OUTPUT, JSON.stringify(albumTimestamps, null, 2));
 
   fs.writeFileSync(POSTS_OUTPUT, JSON.stringify(postsResult, null, 2));
   fs.writeFileSync(MEDIA_OUTPUT, JSON.stringify(mediaResult, null, 2));

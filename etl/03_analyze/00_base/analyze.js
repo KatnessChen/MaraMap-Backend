@@ -21,6 +21,15 @@ if (!API_KEY) {
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
+// --- Partial re-run: node analyze.js <ts1> <ts2> ... — process only these
+// timestamps and merge the results into the existing delta file, leaving every
+// other post's delta untouched (mirrors 02_classify partial mode).
+const TARGET_TIMESTAMPS = process.argv
+  .slice(2)
+  .map(Number)
+  .filter((n) => !isNaN(n));
+const isPartialRun = TARGET_TIMESTAMPS.length > 0;
+
 /**
  * Rule-based title extraction (no AI needed).
  * Priority:
@@ -59,7 +68,15 @@ async function analyzeBase() {
     process.exit(1);
   }
 
-  const posts = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
+  const allPosts = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
+  const posts = isPartialRun
+    ? allPosts.filter((p) => TARGET_TIMESTAMPS.includes(p.timestamp))
+    : allPosts;
+  if (isPartialRun) {
+    console.log(
+      `🔁 Partial re-run — ${posts.length}/${TARGET_TIMESTAMPS.length} target post(s) present in classified.json`,
+    );
+  }
   console.log(`📊 Processing ${posts.length} posts...`);
 
   // Pre-extract rule-based titles
@@ -167,9 +184,21 @@ async function analyzeBase() {
     }
   }
 
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(deltas, null, 2));
+  let finalDeltas = deltas;
+  if (isPartialRun && fs.existsSync(OUTPUT_FILE)) {
+    const existing = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'));
+    const kept = existing.filter(
+      (d) => !TARGET_TIMESTAMPS.includes(d.timestamp),
+    );
+    finalDeltas = [...kept, ...deltas];
+    console.log(
+      `🔀 Merged: ${kept.length} existing + ${deltas.length} re-analyzed = ${finalDeltas.length} total`,
+    );
+  }
+
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(finalDeltas, null, 2));
   console.log(
-    `✅ Base analysis complete — ${deltas.length} deltas saved to ${OUTPUT_FILE}`,
+    `✅ Base analysis complete — ${finalDeltas.length} deltas saved to ${OUTPUT_FILE}`,
   );
 }
 

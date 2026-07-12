@@ -43,7 +43,30 @@ async function importData() {
   }
 
   const rawData = fs.readFileSync(filePath, 'utf8');
-  const posts = JSON.parse(rawData);
+  let posts = JSON.parse(rawData);
+
+  // ALBUM_ONLY=1 restricts the import to just the album-backfill posts. The normal
+  // signature-based skip can't recognise already-imported posts once upload-to-r2
+  // has rewritten their DB media URIs to absolute CDN URLs (local URIs stay
+  // relative → signatures never match → everything looks new and collides on the
+  // (user_id, fb_timestamp) unique key). Album timestamps are brand new, so scope
+  // the insert to exactly them and leave existing rows untouched.
+  if (process.env.ALBUM_ONLY === '1') {
+    const albumPath = path.join(
+      __dirname,
+      `../01_ingest/output/${BATCH}/album_timestamps.json`,
+    );
+    const albumTs = new Set(
+      fs.existsSync(albumPath)
+        ? JSON.parse(fs.readFileSync(albumPath, 'utf8'))
+        : [],
+    );
+    const before = posts.length;
+    posts = posts.filter((p) => albumTs.has(p.timestamp));
+    console.log(
+      `📸 ALBUM_ONLY: importing ${posts.length} album post(s) (filtered from ${before}).`,
+    );
+  }
 
   // Load media lookup (timestamp → media[]) from ingest output
   const mediaPath = path.join(__dirname, `../01_ingest/output/${BATCH}/media.json`);

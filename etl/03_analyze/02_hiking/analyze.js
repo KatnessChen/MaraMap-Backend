@@ -24,6 +24,14 @@ if (!API_KEY) {
 const genAI = new GoogleGenerativeAI(API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
+// --- Partial re-run: node analyze.js <ts1> <ts2> ... — process only these
+// timestamps and merge into the existing delta file (mirrors 02_classify).
+const TARGET_TIMESTAMPS = process.argv
+  .slice(2)
+  .map(Number)
+  .filter((n) => !isNaN(n));
+const isPartialRun = TARGET_TIMESTAMPS.length > 0;
+
 // Output: delta array — [{timestamp, metadata: {mountain_name, peak_number, elevation_m}}]
 async function analyzeHiking() {
   console.log(
@@ -38,8 +46,14 @@ async function analyzeHiking() {
   const allPosts = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
   const posts = allPosts
     .filter((p) => p.category === '登山')
+    .filter((p) => !isPartialRun || TARGET_TIMESTAMPS.includes(p.timestamp))
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+  if (isPartialRun) {
+    console.log(
+      `🔁 Partial re-run — ${TARGET_TIMESTAMPS.length} target(s), ${posts.length} classified as 登山`,
+    );
+  }
   console.log(`📊 Found ${posts.length} hiking posts to analyze...`);
 
   const deltas = [];
@@ -122,9 +136,21 @@ async function analyzeHiking() {
     }
   }
 
-  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(deltas, null, 2));
+  let finalDeltas = deltas;
+  if (isPartialRun && fs.existsSync(OUTPUT_FILE)) {
+    const existing = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'));
+    const kept = existing.filter(
+      (d) => !TARGET_TIMESTAMPS.includes(d.timestamp),
+    );
+    finalDeltas = [...kept, ...deltas];
+    console.log(
+      `🔀 Merged: ${kept.length} existing + ${deltas.length} re-analyzed = ${finalDeltas.length} total`,
+    );
+  }
+
+  fs.writeFileSync(OUTPUT_FILE, JSON.stringify(finalDeltas, null, 2));
   console.log(
-    `✅ Hiking analysis complete — ${deltas.length} deltas saved to ${OUTPUT_FILE}`,
+    `✅ Hiking analysis complete — ${finalDeltas.length} deltas saved to ${OUTPUT_FILE}`,
   );
 }
 
