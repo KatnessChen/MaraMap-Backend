@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Query,
   Param,
   Patch,
@@ -157,6 +158,57 @@ export class FbPostsController {
   ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findByTripId(targetUserId, tripId);
+  }
+
+  @Get('posts/:id/trip-suggestions')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '智慧推薦同行文章 (僅限管理員)' })
+  async getTripSuggestions(
+    @Param('id') id: string,
+    @Query('windowDays') windowDays?: string,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.getTripSuggestions(
+      targetUserId,
+      id,
+      windowDays ? Number(windowDays) : undefined,
+    );
+  }
+
+  @Post('posts/:id/trip/add')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '加入同行文章 (僅限管理員)' })
+  async addToTrip(
+    @Param('id') id: string,
+    @Body('postId') postId: string,
+    @Query('user_id') userId?: string,
+  ) {
+    if (!postId) throw new BadRequestException('postId is required');
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.addToTrip(targetUserId, id, postId);
+  }
+
+  @Post('posts/:id/trip/remove')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '移出行程 (僅限管理員)' })
+  async removeFromTrip(
+    @Param('id') id: string,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.removeFromTrip(targetUserId, id);
+  }
+
+  @Post('posts/:id/make-primary')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '設為行程主文 (僅限管理員)' })
+  async makePrimary(
+    @Param('id') id: string,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.makePrimary(targetUserId, id);
   }
 
   @Public()

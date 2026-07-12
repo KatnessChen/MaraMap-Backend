@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
   Inject,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -334,6 +335,186 @@ export class FbPostsService {
         isPrimary: post.id === tripId,
       };
     });
+  }
+
+  private readonly TRIP_WINDOW_DAYS = 14;
+
+  /**
+   * 智慧推薦同行文章：同國家 + 事件日在 ±windowDays 內、尚未在本行程的文章，
+   * 依「同城 > 日期接近 > 旅遊/登山次文」排序。錨點無國家時退回僅日期的弱推薦。
+   */
+  async getTripSuggestions(
+    userId: string,
+    postId: string,
+    windowDays = this.TRIP_WINDOW_DAYS,
+  ) {
+    const publicUrl = process.env.R2_PUBLIC_URL || '';
+    const client = this.supabase.getClient();
+    const { data: anchor } = await client
+      .from('fb_posts')
+      .select('id, event_date, trip_id, metadata')
+      .eq('user_id', userId)
+      .eq('id', postId)
+      .single();
+    if (!anchor) throw new NotFoundException('文章不存在');
+
+    const country = anchor.metadata?.country?.trim() || null;
+    const anchorMs = new Date(anchor.event_date).getTime();
+    const lo = new Date(anchorMs - windowDays * 86400000);
+    const hi = new Date(anchorMs + windowDays * 86400000);
+    const iso = (d: Date) => d.toISOString().split('T')[0];
+
+    let query = client
+      .from('fb_posts')
+      .select('id, event_date, title, category, cover_image, media, metadata, trip_id')
+      .eq('user_id', userId)
+      .eq('is_hidden', false)
+      .neq('id', postId)
+      .gte('event_date', iso(lo))
+      .lte('event_date', iso(hi));
+    if (country) query = query.eq('metadata->>country', country);
+
+    const { data, error } = await query;
+    if (error) throw new InternalServerErrorException(error.message);
+
+    const anchorTrip = anchor.trip_id;
+    return (data || [])
+      .filter((p) => !(anchorTrip && p.trip_id === anchorTrip))
+      .map((p) => {
+        const days = Math.round(
+          Math.abs(new Date(p.event_date).getTime() - anchorMs) / 86400000,
+        );
+        const sameCity =
+          !!country &&
+          !!p.metadata?.city &&
+          p.metadata.city === anchor.metadata?.city;
+        const isSecondary = p.category === '旅遊' || p.category === '登山';
+        const reason = [
+          country ? '同國' : '鄰近日期',
+          sameCity ? '同城' : null,
+          `差 ${days} 天`,
+        ]
+          .filter(Boolean)
+          .join('・');
+        const norm = this.normalizePost(p, publicUrl);
+        return {
+          postId: p.id,
+          title: p.title,
+          date: p.event_date,
+          category: p.category,
+          country: p.metadata?.country || null,
+          city: p.metadata?.city || null,
+          coverImage: norm?.cover_image || null,
+          daysDiff: days,
+          alreadyInOtherTrip: !!p.trip_id,
+          reason,
+          _score: (sameCity ? 100 : 0) - days + (isSecondary ? 5 : 0),
+        };
+      })
+      .sort((a, b) => b._score - a._score)
+      .map(({ _score, ...rest }) => rest);
+  }
+
+  /**
+   * 加入同行文章。若錨點尚未有行程，則自動建立（錨點成為主文），再把目標掛入。
+   */
+  async addToTrip(userId: string, anchorId: string, postId: string) {
+    const client = this.supabase.getClient();
+    const { data: anchor } = await client
+      .from('fb_posts')
+      .select('id, trip_id')
+      .eq('user_id', userId)
+      .eq('id', anchorId)
+      .single();
+    if (!anchor) throw new NotFoundException('主文不存在');
+
+    let tripId = anchor.trip_id;
+    if (!tripId) {
+      tripId = anchor.id; // 錨點成為主文
+      const { error } = await client
+        .from('fb_posts')
+        .update({ trip_id: tripId })
+        .eq('user_id', userId)
+        .eq('id', anchor.id);
+      if (error) throw new InternalServerErrorException(error.message);
+    }
+
+    const { error: e2 } = await client
+      .from('fb_posts')
+      .update({ trip_id: tripId })
+      .eq('user_id', userId)
+      .eq('id', postId);
+    if (e2) throw new InternalServerErrorException(e2.message);
+
+    await this.cacheManager.del(`pb:${userId}`);
+    return this.findByTripId(userId, tripId);
+  }
+
+  /**
+   * 移出行程。若欲移除的是主文且行程尚有其他成員，擋下並要求先改主文，
+   * 避免留下沒有主文的孤兒行程。
+   */
+  async removeFromTrip(userId: string, postId: string) {
+    const client = this.supabase.getClient();
+    const { data: post } = await client
+      .from('fb_posts')
+      .select('id, trip_id')
+      .eq('user_id', userId)
+      .eq('id', postId)
+      .single();
+    if (!post) throw new NotFoundException('文章不存在');
+    if (!post.trip_id) return [];
+
+    const tripId = post.trip_id;
+    if (post.id === tripId) {
+      const { data: others } = await client
+        .from('fb_posts')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('trip_id', tripId)
+        .neq('id', post.id);
+      if (others && others.length > 0) {
+        throw new BadRequestException(
+          '此為主文，請先將其他文章設為主文，才能移除。',
+        );
+      }
+    }
+
+    const { error } = await client
+      .from('fb_posts')
+      .update({ trip_id: null })
+      .eq('user_id', userId)
+      .eq('id', postId);
+    if (error) throw new InternalServerErrorException(error.message);
+
+    await this.cacheManager.del(`pb:${userId}`);
+    return post.id === tripId ? [] : this.findByTripId(userId, tripId);
+  }
+
+  /**
+   * 設為主文：把整組所有成員的 trip_id 全部改成該篇 id（因為主文 id 即 trip_id），
+   * 原主文自動降為附文。無行程者則自建單篇行程。
+   */
+  async makePrimary(userId: string, postId: string) {
+    const client = this.supabase.getClient();
+    const { data: post } = await client
+      .from('fb_posts')
+      .select('id, trip_id')
+      .eq('user_id', userId)
+      .eq('id', postId)
+      .single();
+    if (!post) throw new NotFoundException('文章不存在');
+
+    const oldTrip = post.trip_id;
+    const filter =
+      oldTrip && oldTrip !== post.id
+        ? client.from('fb_posts').update({ trip_id: post.id }).eq('trip_id', oldTrip)
+        : client.from('fb_posts').update({ trip_id: post.id }).eq('id', post.id);
+    const { error } = await filter.eq('user_id', userId);
+    if (error) throw new InternalServerErrorException(error.message);
+
+    await this.cacheManager.del(`pb:${userId}`);
+    return this.findByTripId(userId, post.id);
   }
 
   async getCategories(userId: string) {
