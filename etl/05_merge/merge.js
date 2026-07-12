@@ -4,14 +4,21 @@ const path = require('path');
 // --- Configuration ---
 const ETL_ROOT = path.join(__dirname, '..'); // /app/etl
 
-const CLASSIFIED_FILE = path.join(ETL_ROOT, '02_classify/output/classified.json');
-const OUTPUT_FILE     = path.join(__dirname, './output/merged.json');
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node merge.js');
+  process.exit(1);
+}
+
+const CLASSIFIED_FILE = path.join(ETL_ROOT, `02_classify/output/${BATCH}/classified.json`);
+const OUTPUT_FILE     = path.join(__dirname, `./output/${BATCH}/merged.json`);
+fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 
 const DELTAS = [
-  { label: 'base',     file: path.join(ETL_ROOT, '03_analyze/00_base/output/base.json'),        required: true },
-  { label: 'marathon', file: path.join(ETL_ROOT, '03_analyze/01_marathon/output/marathon.json'), required: false },
-  { label: 'hiking',   file: path.join(ETL_ROOT, '03_analyze/02_hiking/output/hiking.json'),     required: false },
-  { label: 'format',   file: path.join(ETL_ROOT, '04_format/output/format.json'),                required: false },
+  { label: 'base',     file: path.join(ETL_ROOT, `03_analyze/00_base/output/${BATCH}/base.json`),        required: true },
+  { label: 'marathon', file: path.join(ETL_ROOT, `03_analyze/01_marathon/output/${BATCH}/marathon.json`), required: false },
+  { label: 'hiking',   file: path.join(ETL_ROOT, `03_analyze/02_hiking/output/${BATCH}/hiking.json`),     required: false },
+  { label: 'format',   file: path.join(ETL_ROOT, `04_format/output/${BATCH}/format.json`),                required: false },
 ];
 
 function addPanguSpacing(text) {

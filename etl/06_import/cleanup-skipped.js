@@ -16,8 +16,14 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const DRY_RUN = process.argv.includes('--dry-run');
 
 async function cleanupSkipped() {
-  const allPosts     = JSON.parse(fs.readFileSync(path.join(__dirname, '../01_ingest/output/posts.json'), 'utf8'));
-  const classified   = JSON.parse(fs.readFileSync(path.join(__dirname, '../02_classify/output/classified.json'), 'utf8'));
+  const BATCH = process.env.BATCH;
+  if (!BATCH) {
+    console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node cleanup-skipped.js [--dry-run]');
+    process.exit(1);
+  }
+
+  const allPosts     = JSON.parse(fs.readFileSync(path.join(__dirname, `../01_ingest/output/${BATCH}/posts.json`), 'utf8'));
+  const classified   = JSON.parse(fs.readFileSync(path.join(__dirname, `../02_classify/output/${BATCH}/classified.json`), 'utf8'));
 
   const keepSet      = new Set(classified.map(p => p.timestamp));
   const skipTimestamps = allPosts

@@ -222,16 +222,24 @@ export class FbPostsService {
           (m) =>
             m.lat !== null && m.lng !== null && !isNaN(m.lat) && !isNaN(m.lng),
         );
-        if (geoOnly && !rep) return null;
+        // No photo has real EXIF GPS — fall back to an approximate coordinate
+        // pre-computed by etl/08_geocode/geocode-fallback.js (venue name /
+        // same-trip sibling / city+country, in that priority order).
+        const fallbackLat = post.metadata?.fallback_lat ?? null;
+        const fallbackLng = post.metadata?.fallback_lng ?? null;
+        const hasFallback = fallbackLat !== null && fallbackLng !== null;
+        if (geoOnly && !rep && !hasFallback) return null;
+        // Still show a representative photo even when the pin position comes
+        // from the fallback — just use the post's first media item.
+        const repUri = rep?.uri || media[0]?.uri || null;
         const uri =
-          rep?.uri && !rep.uri.startsWith('http')
-            ? `${publicUrl}/${rep.uri}`
-            : rep?.uri || null;
+          repUri && !repUri.startsWith('http') ? `${publicUrl}/${repUri}` : repUri;
         return {
           id: post.id,
           postId: post.id,
-          lat: rep?.lat ?? null,
-          lng: rep?.lng ?? null,
+          lat: rep?.lat ?? fallbackLat,
+          lng: rep?.lng ?? fallbackLng,
+          isApprox: !rep && hasFallback,
           title: post.title,
           date: post.event_date,
           cat: post.category,

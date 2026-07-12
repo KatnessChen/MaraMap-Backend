@@ -3,11 +3,17 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // --- Configuration ---
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node analyze.js');
+  process.exit(1);
+}
 const INPUT_FILE = path.join(
   __dirname,
-  '../../02_classify/output/classified.json',
+  `../../02_classify/output/${BATCH}/classified.json`,
 );
-const OUTPUT_FILE = path.join(__dirname, './output/hiking.json');
+const OUTPUT_FILE = path.join(__dirname, `./output/${BATCH}/hiking.json`);
+fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 const API_KEY = process.env.GEMINI_API_KEY;
 
 if (!API_KEY) {
@@ -59,7 +65,10 @@ async function analyzeHiking() {
 
       規則：
       - mountain_name: 從文中提取最主要的山岳名稱（如「玉山」、「雪山」）。
-      - peak_number: 山岳在大百岳或小百岳名單中的官方編號（如「百岳編號34」「小百岳編號4」中的數字），不是當事人攀爬的第幾座。若文中未明確寫出編號，可根據你對台灣百岳/小百岳名單的知識填入正確編號。無法確定則 null。
+      - peak_number: 山岳在大百岳或小百岳名單中的官方編號（如「百岳編號34」「小百岳編號4」中的數字），不是當事人攀爬的第幾座。判斷順序（依序執行，第一個成立就採用）：
+        STEP 1: 文中是否明確寫出編號（如「百岳編號34」「小百岳編號4」）？→ 是：直接採用文中數字。
+        STEP 2: 文中未寫出編號 → 根據你對台灣百岳/小百岳官方名單的知識，用 mountain_name 查出正確編號。
+        STEP 3: 連山名都無法確定、或不在百岳/小百岳名單中 → null。
       - elevation_m: 文中提到的海拔高度（公尺數字，去掉單位）。無則 null。
       - 只回傳 JSON，不要任何解釋。
 

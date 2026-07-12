@@ -12,7 +12,12 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-const INPUT_FILE = path.join(__dirname, '../../02_classify/output/classified.json');
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node test-title.js');
+  process.exit(1);
+}
+const INPUT_FILE = path.join(__dirname, `../../02_classify/output/${BATCH}/classified.json`);
 const posts = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
 
 // 10 evenly-spaced posts

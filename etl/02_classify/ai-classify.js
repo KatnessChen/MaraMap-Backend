@@ -3,8 +3,14 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // --- Configuration ---
-const INPUT_FILE = path.join(__dirname, '../01_ingest/output/posts.json');
-const OUTPUT_FILE = path.join(__dirname, './output/classified.json');
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node ai-classify.js');
+  process.exit(1);
+}
+const INPUT_FILE = path.join(__dirname, `../01_ingest/output/${BATCH}/posts.json`);
+const OUTPUT_FILE = path.join(__dirname, `./output/${BATCH}/classified.json`);
+fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 const API_KEY = process.env.GEMINI_API_KEY;
 
 if (!API_KEY) {

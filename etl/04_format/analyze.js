@@ -1,9 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const INPUT_FILE = path.join(__dirname, '../02_classify/output/classified.json');
-const BASE_FILE  = path.join(__dirname, '../03_analyze/00_base/output/base.json');
-const OUTPUT_FILE = path.join(__dirname, './output/format.json');
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node analyze.js');
+  process.exit(1);
+}
+const INPUT_FILE = path.join(__dirname, `../02_classify/output/${BATCH}/classified.json`);
+const BASE_FILE  = path.join(__dirname, `../03_analyze/00_base/output/${BATCH}/base.json`);
+const OUTPUT_FILE = path.join(__dirname, `./output/${BATCH}/format.json`);
+fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 
 /**
  * Add a half-width space between half-width (ASCII) and full-width (CJK) characters.

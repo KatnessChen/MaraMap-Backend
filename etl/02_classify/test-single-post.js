@@ -12,7 +12,12 @@ if (!timestamp) {
   process.exit(1);
 }
 
-const INPUT_FILE = path.join(__dirname, '../01_ingest/output/posts.json');
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node test-single-post.js <timestamp>');
+  process.exit(1);
+}
+const INPUT_FILE = path.join(__dirname, `../01_ingest/output/${BATCH}/posts.json`);
 const posts = JSON.parse(fs.readFileSync(INPUT_FILE, 'utf8'));
 const POST = posts.find((p) => p.timestamp === timestamp);
 if (!POST) {

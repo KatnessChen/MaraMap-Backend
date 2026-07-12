@@ -20,9 +20,15 @@ if (!BUCKET || !process.env.R2_ENDPOINT) {
 }
 
 async function cleanupMedia() {
-  const allPosts   = JSON.parse(fs.readFileSync(path.join(__dirname, '../01_ingest/output/posts.json'), 'utf8'));
-  const classified = JSON.parse(fs.readFileSync(path.join(__dirname, '../02_classify/output/classified.json'), 'utf8'));
-  const allMedia   = JSON.parse(fs.readFileSync(path.join(__dirname, '../01_ingest/output/media.json'), 'utf8'));
+  const BATCH = process.env.BATCH;
+  if (!BATCH) {
+    console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node cleanup-skipped-media.js [--dry-run]');
+    process.exit(1);
+  }
+
+  const allPosts   = JSON.parse(fs.readFileSync(path.join(__dirname, `../01_ingest/output/${BATCH}/posts.json`), 'utf8'));
+  const classified = JSON.parse(fs.readFileSync(path.join(__dirname, `../02_classify/output/${BATCH}/classified.json`), 'utf8'));
+  const allMedia   = JSON.parse(fs.readFileSync(path.join(__dirname, `../01_ingest/output/${BATCH}/media.json`), 'utf8'));
 
   const keepSet    = new Set(classified.map(p => p.timestamp));
   const skipTs     = new Set(allPosts.filter(p => !keepSet.has(p.timestamp)).map(p => p.timestamp));

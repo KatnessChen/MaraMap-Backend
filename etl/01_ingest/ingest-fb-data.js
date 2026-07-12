@@ -1,13 +1,38 @@
 const fs = require('fs');
 const path = require('path');
 
-// Configuration
-const jsonPath = path.join(
-  __dirname,
-  './raw/facebook-chendavis1-2026-3-11-Hl65Zstp/your_facebook_activity/posts/your_posts__check_ins__photos_and_videos_1.json',
-);
-const POSTS_OUTPUT = path.join(__dirname, './output/posts.json');
-const MEDIA_OUTPUT = path.join(__dirname, './output/media.json');
+// Configuration — BATCH must match a folder name under raw/, e.g. BATCH=2016
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<raw-folder-name> node ingest-fb-data.js');
+  process.exit(1);
+}
+
+const RAW_BATCH_DIR = path.join(__dirname, './raw', BATCH);
+const TARGET_FILENAME = 'your_posts__check_ins__photos_and_videos_1.json';
+
+// The extracted export sits in a differently-named subfolder per batch
+// (e.g. "FB下載資料(...)_JSON格式" or "facebook-chendavis1-..."), so search for it.
+function findPostsJson(dir) {
+  if (!fs.existsSync(dir)) return null;
+  const entries = fs.readdirSync(dir, { recursive: true });
+  const match = entries.find(
+    (entry) => path.basename(entry) === TARGET_FILENAME &&
+      entry.includes(`your_facebook_activity${path.sep}posts`),
+  );
+  return match ? path.join(dir, match) : null;
+}
+
+const jsonPath = findPostsJson(RAW_BATCH_DIR);
+if (!jsonPath) {
+  console.error(`❌ Could not find ${TARGET_FILENAME} under raw/${BATCH}/`);
+  process.exit(1);
+}
+
+const OUTPUT_DIR = path.join(__dirname, './output', BATCH);
+fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+const POSTS_OUTPUT = path.join(OUTPUT_DIR, 'posts.json');
+const MEDIA_OUTPUT = path.join(OUTPUT_DIR, 'media.json');
 
 // Fix Facebook-specific Latin-1 encoding issues (mojibake)
 function fixEncoding(str) {
@@ -41,7 +66,9 @@ try {
       a.data && a.data.some(item => item.media)
     );
     const isShare = /分享了.+則(貼文|相片|影片)/.test(title);
+    const isWallComment = /已在.+的個人檔案上留言/.test(title);
 
+    if (isWallComment) return;      // 留言在別人的時間軸，不是自己的貼文
     if (!text && isShare) return;  // 轉發且無自己的文字
     if (!text && !hasMedia) return; // 無文字、無媒體
 

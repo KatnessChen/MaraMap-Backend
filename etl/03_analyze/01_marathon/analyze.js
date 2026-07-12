@@ -3,11 +3,17 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // --- Configuration ---
+const BATCH = process.env.BATCH;
+if (!BATCH) {
+  console.error('❌ Missing BATCH env var. Usage: BATCH=<folder-name> node analyze.js');
+  process.exit(1);
+}
 const INPUT_FILE = path.join(
   __dirname,
-  '../../02_classify/output/classified.json',
+  `../../02_classify/output/${BATCH}/classified.json`,
 );
-const OUTPUT_FILE = path.join(__dirname, './output/marathon.json');
+const OUTPUT_FILE = path.join(__dirname, `./output/${BATCH}/marathon.json`);
+fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 const API_KEY = process.env.GEMINI_API_KEY;
 
 if (!API_KEY) {

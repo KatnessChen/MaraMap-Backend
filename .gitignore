@@ -34,7 +34,9 @@ etl/03_analyze/00_base/output/
 etl/03_analyze/01_marathon/output/
 etl/03_analyze/02_hiking/output/
 etl/03_analyze/output/
-etl/04_import/output/
+etl/04_format/output/
+etl/05_merge/output/
+etl/06_import/output/
 etl/.env
 
 # Legacy (pre-reorganization)
