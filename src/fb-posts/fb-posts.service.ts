@@ -376,6 +376,28 @@ export class FbPostsService {
     );
   }
 
+  async geocodeLocation(country?: string, city?: string) {
+    const query = [city, country].filter(Boolean).join(' ').trim();
+    if (!query) return { lat: null, lng: null };
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+    let results: any[];
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'MaraMap-admin-geocode/1.0 (personal project, manual admin lookup)',
+        },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      results = await res.json();
+    } catch {
+      throw new InternalServerErrorException('地理編碼查詢失敗，請稍後再試。');
+    }
+    const hit = results[0];
+    if (!hit) return { lat: null, lng: null };
+    return { lat: parseFloat(hit.lat), lng: parseFloat(hit.lon) };
+  }
+
   async findOne(userId: string, id: string, isAdmin: boolean = false) {
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     const client = this.supabase.getClient();

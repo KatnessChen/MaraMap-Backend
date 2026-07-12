@@ -178,4 +178,17 @@ export class FbPostsController {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.getCategories(targetUserId);
   }
+
+  @Get('geocode')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '依國家/城市查詢經緯度（管理員專用）' })
+  async geocode(
+    @Query('country') country?: string,
+    @Query('city') city?: string,
+  ) {
+    if (!country && !city) {
+      throw new BadRequestException('country or city is required');
+    }
+    return this.fbPostsService.geocodeLocation(country, city);
+  }
 }
