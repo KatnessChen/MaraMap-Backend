@@ -185,6 +185,15 @@ export class FbPostsService {
     巴西: 'Brazil',
     阿根廷: 'Argentina',
     墨西哥: 'Mexico',
+    俄羅斯: 'Russia',
+    蒙古: 'Mongolia',
+    智利: 'Chile',
+    秘魯: 'Peru',
+    摩洛哥: 'Morocco',
+    寮國: 'Laos',
+    冰島: 'Iceland',
+    法羅群島: 'Faroe Islands',
+    南極: 'Antarctica',
   };
 
   async findLocations(
