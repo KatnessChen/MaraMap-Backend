@@ -202,7 +202,9 @@ export class FbPostsService {
     let query = client
       .from('fb_posts')
       .select(
-        'id, event_date, title, category, sub_categories, media, metadata',
+        'id, event_date, title, category, sub_categories, media, ' +
+          'fallback_lat:metadata->fallback_lat, fallback_lng:metadata->fallback_lng, ' +
+          'country:metadata->>country, continent:metadata->>continent, city:metadata->>city',
       )
       .eq('user_id', userId)
       .eq('is_hidden', false)
@@ -215,7 +217,7 @@ export class FbPostsService {
       query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
     const { data, error } = await query;
     if (error) return [];
-    return (data || [])
+    return ((data as any[]) || [])
       .map((post) => {
         const media = Array.isArray(post.media) ? post.media : [];
         const rep = media.find(
@@ -225,8 +227,8 @@ export class FbPostsService {
         // No photo has real EXIF GPS — fall back to an approximate coordinate
         // pre-computed by etl/08_geocode/geocode-fallback.js (venue name /
         // same-trip sibling / city+country, in that priority order).
-        const fallbackLat = post.metadata?.fallback_lat ?? null;
-        const fallbackLng = post.metadata?.fallback_lng ?? null;
+        const fallbackLat = post.fallback_lat ?? null;
+        const fallbackLng = post.fallback_lng ?? null;
         const hasFallback = fallbackLat !== null && fallbackLng !== null;
         if (geoOnly && !rep && !hasFallback) return null;
         // Still show a representative photo even when the pin position comes
@@ -246,13 +248,13 @@ export class FbPostsService {
           uri: uri,
           photoCount: media.length,
           sub_cats: Array.isArray(post.sub_categories) ? post.sub_categories : [],
-          country: post.metadata?.country || null,
+          country: post.country || null,
           country_en:
-            this.COUNTRY_NAME_MAP[post.metadata?.country?.trim()] ||
-            post.metadata?.country ||
+            this.COUNTRY_NAME_MAP[post.country?.trim()] ||
+            post.country ||
             null,
-          continent: post.metadata?.continent || null,
-          city: post.metadata?.city || null,
+          continent: post.continent || null,
+          city: post.city || null,
         };
       })
       .filter((p) => p !== null);

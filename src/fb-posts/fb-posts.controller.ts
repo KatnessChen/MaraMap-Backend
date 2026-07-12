@@ -9,6 +9,7 @@ import {
   BadRequestException,
   UseGuards,
   Req,
+  Header,
 } from '@nestjs/common';
 import { FbPostsService } from './fb-posts.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -124,6 +125,7 @@ export class FbPostsController {
 
   @Public()
   @Get('locations')
+  @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
   @ApiOperation({ summary: '取得地圖點位' })
   async getLocations(
     @Query('category') category?: string,
