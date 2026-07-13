@@ -195,6 +195,7 @@ export class FbPostsService {
     冰島: 'Iceland',
     法羅群島: 'Faroe Islands',
     南極: 'Antarctica',
+    帛琉: 'Palau',
   };
 
   async findLocations(
