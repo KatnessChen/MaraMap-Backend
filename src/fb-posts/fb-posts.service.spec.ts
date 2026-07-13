@@ -193,6 +193,9 @@ describe('FbPostsService', () => {
           event_date: '2026-01-01',
           category: 'marathon',
           media: [{ lat: 25.0, lng: 121.0, uri: 'img.jpg', type: 'photo' }],
+          // findLocations selects country via the `country:metadata->>country`
+          // alias, so it reads a top-level `country`, not `metadata.country`.
+          country: 'Taiwan',
           metadata: { country: 'Taiwan' },
         },
       ];
