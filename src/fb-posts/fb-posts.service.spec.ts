@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   InternalServerErrorException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { FbPostsService } from './fb-posts.service';
@@ -289,6 +290,131 @@ describe('FbPostsService', () => {
 
       const result = await service.findAll('user-123');
       expect(result.data[0].cover_image).toMatch(/images\/photo\.jpg$/);
+    });
+  });
+
+  describe('trip management', () => {
+    it('getTripSuggestions ranks near-date/same-city candidates and excludes the current trip', async () => {
+      mockSupabaseClient.then
+        .mockImplementationOnce((resolve) =>
+          resolve({
+            data: {
+              id: 'anchor',
+              event_date: '2016-02-28',
+              trip_id: 'anchor',
+              metadata: { country: '日本', city: '東京' },
+            },
+            error: null,
+          }),
+        )
+        .mockImplementationOnce((resolve) =>
+          resolve({
+            data: [
+              {
+                id: 'c1',
+                event_date: '2016-02-27',
+                title: '賽前準備',
+                category: '旅遊',
+                media: [],
+                metadata: { country: '日本', city: '東京' },
+                trip_id: null,
+              },
+              {
+                id: 'c2',
+                event_date: '2016-03-02',
+                title: '晴空塔',
+                category: '旅遊',
+                media: [],
+                metadata: { country: '日本', city: '東京' },
+                trip_id: 'otherTrip',
+              },
+              {
+                id: 'inTrip',
+                event_date: '2016-02-28',
+                title: 'x',
+                category: '旅遊',
+                media: [],
+                metadata: { country: '日本' },
+                trip_id: 'anchor',
+              },
+            ],
+            error: null,
+          }),
+        );
+
+      const res = await service.getTripSuggestions('user-123', 'anchor');
+      expect(res).toHaveLength(2); // the same-trip candidate is excluded
+      expect(res[0].postId).toBe('c1'); // 1 day beats 3 days
+      expect(res[0].reason).toContain('同國');
+      expect(res.find((r) => r.postId === 'c2')?.alreadyInOtherTrip).toBe(true);
+    });
+
+    it('getTripSuggestions throws NotFound when the anchor is missing', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, error: null }),
+      );
+      await expect(
+        service.getTripSuggestions('user-123', 'missing'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('addToTrip auto-creates a trip when the anchor has none', async () => {
+      mockSupabaseClient.then
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: { id: 'anchor', trip_id: null }, error: null }),
+        )
+        .mockImplementationOnce((resolve) => resolve({ error: null }))
+        .mockImplementationOnce((resolve) => resolve({ error: null }))
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: [], error: null }),
+        );
+      const res = await service.addToTrip('user-123', 'anchor', 'target');
+      expect(mockSupabaseClient.update).toHaveBeenCalledWith({
+        trip_id: 'anchor',
+      });
+      expect(Array.isArray(res)).toBe(true);
+    });
+
+    it('removeFromTrip blocks removing the primary while members remain', async () => {
+      mockSupabaseClient.then
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: { id: 'T', trip_id: 'T' }, error: null }),
+        )
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: [{ id: 'other' }], error: null }),
+        );
+      await expect(service.removeFromTrip('user-123', 'T')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('removeFromTrip removes a secondary post', async () => {
+      mockSupabaseClient.then
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: { id: 'sec', trip_id: 'T' }, error: null }),
+        )
+        .mockImplementationOnce((resolve) => resolve({ error: null }))
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: [], error: null }),
+        );
+      const res = await service.removeFromTrip('user-123', 'sec');
+      expect(Array.isArray(res)).toBe(true);
+    });
+
+    it('makePrimary re-keys the whole group to the promoted post', async () => {
+      mockSupabaseClient.then
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: { id: 'newP', trip_id: 'oldT' }, error: null }),
+        )
+        .mockImplementationOnce((resolve) => resolve({ error: null }))
+        .mockImplementationOnce((resolve) =>
+          resolve({ data: [], error: null }),
+        );
+      const res = await service.makePrimary('user-123', 'newP');
+      expect(mockSupabaseClient.update).toHaveBeenCalledWith({
+        trip_id: 'newP',
+      });
+      expect(Array.isArray(res)).toBe(true);
     });
   });
 });
