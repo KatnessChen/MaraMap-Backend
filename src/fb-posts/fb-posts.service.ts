@@ -246,7 +246,9 @@ export class FbPostsService {
         // from the fallback — just use the post's first media item.
         const repUri = rep?.uri || media[0]?.uri || null;
         const uri =
-          repUri && !repUri.startsWith('http') ? `${publicUrl}/${repUri}` : repUri;
+          repUri && !repUri.startsWith('http')
+            ? `${publicUrl}/${repUri}`
+            : repUri;
         return {
           id: post.id,
           postId: post.id,
@@ -258,12 +260,12 @@ export class FbPostsService {
           cat: post.category,
           uri: uri,
           photoCount: media.length,
-          sub_cats: Array.isArray(post.sub_categories) ? post.sub_categories : [],
+          sub_cats: Array.isArray(post.sub_categories)
+            ? post.sub_categories
+            : [],
           country: post.country || null,
           country_en:
-            this.COUNTRY_NAME_MAP[post.country?.trim()] ||
-            post.country ||
-            null,
+            this.COUNTRY_NAME_MAP[post.country?.trim()] || post.country || null,
           continent: post.continent || null,
           city: post.city || null,
         };
@@ -311,7 +313,9 @@ export class FbPostsService {
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('fb_posts')
-      .select('id, event_date, title, category, cover_image, media, metadata, trip_id')
+      .select(
+        'id, event_date, title, category, cover_image, media, metadata, trip_id',
+      )
       .eq('user_id', userId)
       .eq('trip_id', tripId)
       .eq('is_hidden', false)
@@ -321,7 +325,9 @@ export class FbPostsService {
       let cover = post.cover_image;
       if (!cover || cover.trim() === '') {
         const media = Array.isArray(post.media) ? post.media : [];
-        const firstPhoto = media.find((m) => m.type === 'photo' || m.type === 'image');
+        const firstPhoto = media.find(
+          (m) => m.type === 'photo' || m.type === 'image',
+        );
         cover = firstPhoto?.uri ?? media[0]?.uri ?? null;
       }
       if (cover && !cover.startsWith('http')) cover = `${publicUrl}/${cover}`;
@@ -367,7 +373,9 @@ export class FbPostsService {
 
     let query = client
       .from('fb_posts')
-      .select('id, event_date, title, category, cover_image, media, metadata, trip_id')
+      .select(
+        'id, event_date, title, category, cover_image, media, metadata, trip_id',
+      )
       .eq('user_id', userId)
       .eq('is_hidden', false)
       .neq('id', postId)
@@ -399,21 +407,23 @@ export class FbPostsService {
           .join('・');
         const norm = this.normalizePost(p, publicUrl);
         return {
-          postId: p.id,
-          title: p.title,
-          date: p.event_date,
-          category: p.category,
-          country: p.metadata?.country || null,
-          city: p.metadata?.city || null,
-          coverImage: norm?.cover_image || null,
-          daysDiff: days,
-          alreadyInOtherTrip: !!p.trip_id,
-          reason,
-          _score: (sameCity ? 100 : 0) - days + (isSecondary ? 5 : 0),
+          score: (sameCity ? 100 : 0) - days + (isSecondary ? 5 : 0),
+          item: {
+            postId: p.id,
+            title: p.title,
+            date: p.event_date,
+            category: p.category,
+            country: p.metadata?.country || null,
+            city: p.metadata?.city || null,
+            coverImage: norm?.cover_image || null,
+            daysDiff: days,
+            alreadyInOtherTrip: !!p.trip_id,
+            reason,
+          },
         };
       })
-      .sort((a, b) => b._score - a._score)
-      .map(({ _score, ...rest }) => rest);
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.item);
   }
 
   /**
@@ -509,8 +519,14 @@ export class FbPostsService {
     const oldTrip = post.trip_id;
     const filter =
       oldTrip && oldTrip !== post.id
-        ? client.from('fb_posts').update({ trip_id: post.id }).eq('trip_id', oldTrip)
-        : client.from('fb_posts').update({ trip_id: post.id }).eq('id', post.id);
+        ? client
+            .from('fb_posts')
+            .update({ trip_id: post.id })
+            .eq('trip_id', oldTrip)
+        : client
+            .from('fb_posts')
+            .update({ trip_id: post.id })
+            .eq('id', post.id);
     const { error } = await filter.eq('user_id', userId);
     if (error) throw new InternalServerErrorException(error.message);
 
@@ -605,7 +621,10 @@ export class FbPostsService {
       .eq('user_id', userId)
       .eq('id', id)
       .single();
-    if (current?.is_ai_editing_locked && updateDto.is_ai_editing_locked !== false) {
+    if (
+      current?.is_ai_editing_locked &&
+      updateDto.is_ai_editing_locked !== false
+    ) {
       throw new ForbiddenException('此文章已鎖定，禁止修改。');
     }
 
@@ -681,14 +700,16 @@ export class FbPostsService {
 
     for (const post of data) {
       const participants: any[] = post.metadata?.participants || [];
-      const raceName: string | null = post.metadata?.race_name || post.title || null;
+      const raceName: string | null =
+        post.metadata?.race_name || post.title || null;
       const country: string | null = post.metadata?.country || null;
       const isPostPB: boolean = post.is_personal_best === true;
 
       for (const p of participants) {
         if (!p.name || !p.time || !p.distance) continue;
         const name: string = p.name;
-        if (!participantMap[name]) participantMap[name] = { bests: {}, timeline: [] };
+        if (!participantMap[name])
+          participantMap[name] = { bests: {}, timeline: [] };
         const pData = participantMap[name];
 
         const timeSeconds = this.parseTimeToSeconds(p.time);
@@ -697,12 +718,28 @@ export class FbPostsService {
         // Update current best if faster
         const existing = pData.bests[p.distance];
         if (!existing || timeSeconds < existing.timeSeconds) {
-          pData.bests[p.distance] = { time: p.time, timeSeconds, raceName, date: post.event_date, postId: post.id, country, distanceKm: p.stats?.distance_km ?? null };
+          pData.bests[p.distance] = {
+            time: p.time,
+            timeSeconds,
+            raceName,
+            date: post.event_date,
+            postId: post.id,
+            country,
+            distanceKm: p.stats?.distance_km ?? null,
+          };
         }
 
         // Add to timeline if post-level OR participant-level PB flag
         if (isPostPB || p.is_personal_best === true) {
-          pData.timeline.push({ date: post.event_date, raceName, country, distance: p.distance, time: p.time, postId: post.id, delta: null });
+          pData.timeline.push({
+            date: post.event_date,
+            raceName,
+            country,
+            distance: p.distance,
+            time: p.time,
+            postId: post.id,
+            delta: null,
+          });
         }
       }
     }
@@ -724,14 +761,28 @@ export class FbPostsService {
     }
 
     // Strip internal timeSeconds from bests
-    const result: Record<string, { bests: Record<string, Omit<BestEntry, 'timeSeconds'>>; timeline: TimelineEntry[] }> = {};
+    const result: Record<
+      string,
+      {
+        bests: Record<string, Omit<BestEntry, 'timeSeconds'>>;
+        timeline: TimelineEntry[];
+      }
+    > = {};
     for (const [name, pData] of Object.entries(participantMap)) {
-      if (pData.timeline.length === 0 && Object.keys(pData.bests).length === 0) continue;
+      if (pData.timeline.length === 0 && Object.keys(pData.bests).length === 0)
+        continue;
       result[name] = {
         bests: Object.fromEntries(
           Object.entries(pData.bests).map(([dist, b]) => [
             dist,
-            { time: b.time, raceName: b.raceName, date: b.date, postId: b.postId, country: b.country, distanceKm: b.distanceKm },
+            {
+              time: b.time,
+              raceName: b.raceName,
+              date: b.date,
+              postId: b.postId,
+              country: b.country,
+              distanceKm: b.distanceKm,
+            },
           ]),
         ),
         timeline: pData.timeline,
