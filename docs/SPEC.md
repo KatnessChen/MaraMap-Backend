@@ -83,14 +83,14 @@ CREATE TABLE fb_posts (
   is_hidden boolean DEFAULT false,
   is_personal_best boolean DEFAULT false,
   is_ai_editing_locked boolean DEFAULT false,
-  continent text,                        -- legacy, unused by current API code (location now lives in metadata.continent)
-  is_overseas boolean,                   -- legacy, unused by current API code
   created_at timestamptz DEFAULT now(),
   UNIQUE (user_id, fb_timestamp)
 );
 ```
 
-Indexes as of 2026-07-13 (`supabase inspect db index-sizes`):
+`continent` and `is_overseas` (legacy top-level columns predating the `metadata` model) and the unused `fb_posts_search_idx` full-text index were removed in `supabase/migrations/20260714000000_drop_legacy_columns.sql` (2026-07-14) — the 38 rows whose only continent data lived in the legacy column were backfilled into `metadata.continent` first.
+
+Indexes as of 2026-07-14 (`supabase inspect db index-sizes`):
 
 ```sql
 -- pre-existing
@@ -98,12 +98,7 @@ CREATE UNIQUE INDEX fb_posts_pkey ON fb_posts (id);
 CREATE UNIQUE INDEX fb_posts_user_id_fb_timestamp_key ON fb_posts (user_id, fb_timestamp);
 CREATE INDEX idx_fb_posts_user_id ON fb_posts (user_id);
 CREATE INDEX idx_fb_posts_date ON fb_posts (event_date DESC);
-CREATE INDEX idx_fb_posts_is_hidden ON fb_posts (is_hidden);
--- fb_posts_search_idx: GIN full-text index over (title || content), ~7.4MB,
--- 0 index scans recorded — not referenced by any current query (exact
--- definition not re-verified here; neither this nor idx_fb_posts_is_hidden
--- appear in any prior migration file, so they were likely added by hand
--- via the Supabase SQL editor).
+CREATE INDEX idx_fb_posts_is_hidden ON fb_posts (is_hidden); -- not in any migration file, likely added by hand via the Supabase SQL editor
 
 -- added by supabase/migrations/20260713_add_query_indexes.sql
 CREATE INDEX idx_fb_posts_user_hidden_date ON fb_posts (user_id, is_hidden, event_date DESC);
