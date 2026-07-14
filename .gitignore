@@ -41,3 +41,6 @@ etl/.env
 
 # Legacy (pre-reorganization)
 server_log.txt
+
+# Supabase CLI local state
+supabase/.temp/
