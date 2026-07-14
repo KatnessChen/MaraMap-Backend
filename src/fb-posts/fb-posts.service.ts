@@ -213,7 +213,8 @@ export class FbPostsService {
     let query = client
       .from('fb_posts')
       .select(
-        'id, event_date, title, category, sub_categories, media, ' +
+        'id, event_date, title, category, sub_categories, ' +
+          'rep_media:fb_posts_rep_media, ' +
           'fallback_lat:metadata->fallback_lat, fallback_lng:metadata->fallback_lng, ' +
           'country:metadata->>country, continent:metadata->>continent, city:metadata->>city',
       )
@@ -230,21 +231,20 @@ export class FbPostsService {
     if (error) return [];
     return ((data as any[]) || [])
       .map((post) => {
-        const media = Array.isArray(post.media) ? post.media : [];
-        const rep = media.find(
-          (m) =>
-            m.lat !== null && m.lng !== null && !isNaN(m.lat) && !isNaN(m.lng),
-        );
+        // rep_media is computed server-side by the fb_posts_rep_media()
+        // Postgres function (see supabase/migrations) — finds the first
+        // media item with real EXIF GPS without shipping the whole
+        // (often 20-600+ item) media array to the backend.
+        const repMedia = post.rep_media || {};
+        const hasRealGeo = repMedia.lat != null && repMedia.lng != null;
         // No photo has real EXIF GPS — fall back to an approximate coordinate
         // pre-computed by etl/08_geocode/geocode-fallback.js (venue name /
         // same-trip sibling / city+country, in that priority order).
         const fallbackLat = post.fallback_lat ?? null;
         const fallbackLng = post.fallback_lng ?? null;
         const hasFallback = fallbackLat !== null && fallbackLng !== null;
-        if (geoOnly && !rep && !hasFallback) return null;
-        // Still show a representative photo even when the pin position comes
-        // from the fallback — just use the post's first media item.
-        const repUri = rep?.uri || media[0]?.uri || null;
+        if (geoOnly && !hasRealGeo && !hasFallback) return null;
+        const repUri = repMedia.uri || null;
         const uri =
           repUri && !repUri.startsWith('http')
             ? `${publicUrl}/${repUri}`
@@ -252,14 +252,14 @@ export class FbPostsService {
         return {
           id: post.id,
           postId: post.id,
-          lat: rep?.lat ?? fallbackLat,
-          lng: rep?.lng ?? fallbackLng,
-          isApprox: !rep && hasFallback,
+          lat: hasRealGeo ? repMedia.lat : fallbackLat,
+          lng: hasRealGeo ? repMedia.lng : fallbackLng,
+          isApprox: !hasRealGeo && hasFallback,
           title: post.title,
           date: post.event_date,
           cat: post.category,
           uri: uri,
-          photoCount: media.length,
+          photoCount: repMedia.photo_count ?? 0,
           sub_cats: Array.isArray(post.sub_categories)
             ? post.sub_categories
             : [],
