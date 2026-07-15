@@ -64,9 +64,4 @@ export class UpdateFbPostDto {
   @IsObject()
   @IsOptional()
   metadata?: any;
-
-  @ApiPropertyOptional()
-  @IsBoolean()
-  @IsOptional()
-  is_ai_editing_locked?: boolean;
 }

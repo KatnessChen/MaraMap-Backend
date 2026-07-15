@@ -68,6 +68,22 @@ async function importData() {
     );
   }
 
+  // ONLY_TS=<ts1,ts2,...> restricts the import to specific timestamps. Same reason
+  // as ALBUM_ONLY (signature dedup is unreliable post-R2); use it to recover a
+  // single post the AI classifier wrongly dropped as "skip".
+  if (process.env.ONLY_TS) {
+    const wanted = new Set(
+      process.env.ONLY_TS.split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => !isNaN(n)),
+    );
+    const before = posts.length;
+    posts = posts.filter((p) => wanted.has(p.timestamp));
+    console.log(
+      `🎯 ONLY_TS: importing ${posts.length} post(s) (filtered from ${before}).`,
+    );
+  }
+
   // Load media lookup (timestamp → media[]) from ingest output
   const mediaPath = path.join(__dirname, `../01_ingest/output/${BATCH}/media.json`);
   const mediaByTimestamp = new Map();

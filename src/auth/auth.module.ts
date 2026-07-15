@@ -13,7 +13,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       useFactory: async (configService: ConfigService) => ({
         secret:
           configService.get<string>('JWT_SECRET') || 'maramap_secret_key_2026',
-        signOptions: { expiresIn: '1h' },
+        signOptions: { expiresIn: '24h' },
       }),
       inject: [ConfigService],
     }),

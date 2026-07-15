@@ -58,7 +58,11 @@ export class StatsService {
     }
   }
 
-  async getVisits(): Promise<{ total_human: number; total_bot: number; pages: any[] }> {
+  async getVisits(): Promise<{
+    total_human: number;
+    total_bot: number;
+    pages: any[];
+  }> {
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('page_views')
@@ -71,7 +75,10 @@ export class StatsService {
     }
 
     const pages = data || [];
-    const total_human = pages.reduce((sum, r) => sum + Number(r.human_views), 0);
+    const total_human = pages.reduce(
+      (sum, r) => sum + Number(r.human_views),
+      0,
+    );
     const total_bot = pages.reduce((sum, r) => sum + Number(r.bot_views), 0);
     return { total_human, total_bot, pages };
   }

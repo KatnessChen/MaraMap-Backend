@@ -7,7 +7,16 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.use(compression());
+  // Exclude the FB-import streaming endpoint — compression buffers chunks to
+  // improve ratio, which would delay live log lines reaching the browser.
+  app.use(
+    compression({
+      filter: (req, res) => {
+        if (req.path.startsWith('/api/v1/admin/fb-import')) return false;
+        return compression.filter(req, res);
+      },
+    }),
+  );
 
   app.enableCors({
     // Allow frontend, local dev, and environment-specified origins

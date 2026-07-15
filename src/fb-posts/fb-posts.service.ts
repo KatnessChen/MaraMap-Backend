@@ -2,20 +2,24 @@ import {
   Injectable,
   InternalServerErrorException,
   NotFoundException,
-  ForbiddenException,
   BadRequestException,
   Inject,
+  Logger,
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateFbPostDto } from './update-fb-post.dto';
+import { R2Service } from '../storage/r2.service';
 
 @Injectable()
 export class FbPostsService {
+  private readonly logger = new Logger(FbPostsService.name);
+
   constructor(
     private readonly supabase: SupabaseService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+    private readonly r2: R2Service,
   ) {}
 
   /**
@@ -615,19 +619,6 @@ export class FbPostsService {
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     const client = this.supabase.getClient();
 
-    const { data: current } = await client
-      .from('fb_posts')
-      .select('is_ai_editing_locked')
-      .eq('user_id', userId)
-      .eq('id', id)
-      .single();
-    if (
-      current?.is_ai_editing_locked &&
-      updateDto.is_ai_editing_locked !== false
-    ) {
-      throw new ForbiddenException('此文章已鎖定，禁止修改。');
-    }
-
     const { data, error } = await client
       .from('fb_posts')
       .update(updateDto)
@@ -803,6 +794,20 @@ export class FbPostsService {
       .select()
       .single();
     if (error) throw error;
+
+    // Best-effort R2 cleanup — must never fail the delete itself.
+    const media = Array.isArray(data?.media) ? data.media : [];
+    for (const m of media) {
+      try {
+        const key = this.r2.keyFromUrl(m?.uri);
+        if (key) await this.r2.delete(key);
+      } catch (err: any) {
+        this.logger.warn(
+          `R2 cleanup skipped for ${m?.uri}: ${err?.message || err}`,
+        );
+      }
+    }
+
     return data;
   }
 }

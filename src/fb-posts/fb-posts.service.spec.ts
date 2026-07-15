@@ -7,9 +7,19 @@ import {
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { FbPostsService } from './fb-posts.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { R2Service } from '../storage/r2.service';
 
 describe('FbPostsService', () => {
   let service: FbPostsService;
+
+  const mockR2Service = {
+    delete: jest.fn().mockResolvedValue(undefined),
+    keyFromUrl: jest.fn((uri: string) =>
+      uri?.startsWith('https://cdn.example.com/')
+        ? uri.replace('https://cdn.example.com/', '')
+        : null,
+    ),
+  };
 
   const mockSupabaseClient = {
     from: jest.fn().mockReturnThis(),
@@ -47,10 +57,13 @@ describe('FbPostsService', () => {
           provide: CACHE_MANAGER,
           useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() },
         },
+        { provide: R2Service, useValue: mockR2Service },
       ],
     }).compile();
 
     service = module.get<FbPostsService>(FbPostsService);
+    mockR2Service.delete.mockClear();
+    mockR2Service.delete.mockResolvedValue(undefined);
   });
 
   it('should be defined', () => {
@@ -100,11 +113,6 @@ describe('FbPostsService', () => {
   describe('update', () => {
     it('should update a post', async () => {
       const updateDto = { title: 'New' };
-      // First call: lock check query
-      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
-        resolve({ data: { is_ai_editing_locked: false }, error: null }),
-      );
-      // Second call: actual update
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: { id: '1', media: [], ...updateDto }, error: null }),
       );
@@ -126,6 +134,40 @@ describe('FbPostsService', () => {
       expect(mockSupabaseClient.delete).toHaveBeenCalled();
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('id', 'post-1');
       expect(result).toEqual(mockDeleted);
+    });
+
+    it('best-effort deletes each media object without failing the delete', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: {
+            id: 'post-1',
+            media: [
+              { uri: 'https://cdn.example.com/a.jpg' },
+              { uri: 'https://cdn.example.com/b.jpg' },
+            ],
+          },
+          error: null,
+        }),
+      );
+
+      await service.remove('user-123', 'post-1');
+      expect(mockR2Service.delete).toHaveBeenCalledWith('a.jpg');
+      expect(mockR2Service.delete).toHaveBeenCalledWith('b.jpg');
+    });
+
+    it('does not throw when R2 deletion rejects', async () => {
+      mockR2Service.delete.mockRejectedValueOnce(new Error('R2 down'));
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: {
+            id: 'post-1',
+            media: [{ uri: 'https://cdn.example.com/a.jpg' }],
+          },
+          error: null,
+        }),
+      );
+
+      await expect(service.remove('user-123', 'post-1')).resolves.toBeDefined();
     });
   });
 

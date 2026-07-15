@@ -9,6 +9,7 @@ import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { FbPostsModule } from './fb-posts/fb-posts.module';
 import { StatsModule } from './stats/stats.module';
+import { FbImportModule } from './fb-import/fb-import.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { StatsModule } from './stats/stats.module';
     AuthModule,
     FbPostsModule,
     StatsModule,
+    FbImportModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -10,6 +10,7 @@ if (!BATCH) {
 }
 const INPUT_FILE = path.join(__dirname, `../01_ingest/output/${BATCH}/posts.json`);
 const OUTPUT_FILE = path.join(__dirname, `./output/${BATCH}/classified.json`);
+const SKIPPED_OUTPUT = path.join(__dirname, `./output/${BATCH}/skipped.json`);
 fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
 const API_KEY = process.env.GEMINI_API_KEY;
 
@@ -275,6 +276,17 @@ async function classifyPosts() {
     console.log(
       `📊 This run: ${newResults.length} classified, ${skipQueue.length} reviewed (${skipQueue.length - (newResults.length - (isPartialRun ? 0 : 0))} confirmed skip)`,
     );
+
+    // Set difference against postsToProcess catches every drop path (batch
+    // API errors, first-pass skip, second-pass confirmed skip, review
+    // errors) without needing to track each branch separately. Lets the
+    // admin-import review step offer these posts for manual rescue.
+    const classifiedTimestamps = new Set(finalResults.map((r) => r.timestamp));
+    const stillSkipped = postsToProcess
+      .filter((p) => !classifiedTimestamps.has(p.timestamp))
+      .map((p) => ({ timestamp: p.timestamp, date: p.date, title: p.title, text: p.text }));
+    fs.writeFileSync(SKIPPED_OUTPUT, JSON.stringify(stillSkipped, null, 2));
+    console.log(`⏭️  ${stillSkipped.length} post(s) skipped — saved to ${SKIPPED_OUTPUT}`);
   } catch (error) {
     console.error('❌ AI Processing Error:', error.message);
   }

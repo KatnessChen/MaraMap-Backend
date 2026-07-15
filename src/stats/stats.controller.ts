@@ -37,7 +37,8 @@ export class StatsController {
     @Headers('origin') origin: string,
   ) {
     if (!path) throw new BadRequestException('path is required');
-    if (/localhost|127\.0\.0\.1/.test(origin || '')) return { ok: true, skipped: true };
+    if (/localhost|127\.0\.0\.1/.test(origin || ''))
+      return { ok: true, skipped: true };
     await this.statsService.recordVisit(path, userAgent || '');
     return { ok: true };
   }

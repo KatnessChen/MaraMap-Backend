@@ -13,7 +13,7 @@ export class AuthController {
   @ApiOperation({
     summary: 'Login',
     description:
-      'Authenticates a user via Supabase and returns an access token valid for 1 hour (Supabase default). No refresh token is issued — the frontend re-prompts login on 401.',
+      'Authenticates a user and returns an access token valid for 24 hours. No refresh token is issued — the frontend re-prompts login on 401.',
   })
   @ApiResponse({
     status: 200,
