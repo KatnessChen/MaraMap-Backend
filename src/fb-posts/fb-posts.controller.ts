@@ -77,11 +77,12 @@ export class FbPostsController {
   @Get('posts/search')
   @ApiOperation({ summary: '模糊搜尋文章' })
   async searchPosts(
+    @Req() req: any,
     @Query() queryDto: FuzzySearchDto,
     @Query('user_id') userId?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
-    return this.fbPostsService.fuzzySearch(targetUserId, queryDto);
+    return this.fbPostsService.fuzzySearch(targetUserId, queryDto, req.isAdmin);
   }
 
   @Public()

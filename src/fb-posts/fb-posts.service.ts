@@ -3,6 +3,7 @@ import {
   InternalServerErrorException,
   NotFoundException,
   BadRequestException,
+  UnauthorizedException,
   Inject,
   Logger,
 } from '@nestjs/common';
@@ -86,6 +87,11 @@ export class FbPostsService {
 
     // --- 安全過濾邏輯 ---
     if (!isAdmin) {
+      // 明確要求看隱藏文章卻沒有管理員身分（多半是 token 過期）：
+      // 回 401 讓前端導回登入頁，而不是默默降級成公開清單。
+      if (status === 'all' || status === 'hidden') {
+        throw new UnauthorizedException('管理員登入已過期，請重新登入。');
+      }
       query = query.eq('is_hidden', false);
     } else {
       if (status === 'visible') query = query.eq('is_hidden', false);
@@ -121,17 +127,17 @@ export class FbPostsService {
     };
   }
 
-  async fuzzySearch(userId: string, queryDto: any) {
+  async fuzzySearch(userId: string, queryDto: any, isAdmin: boolean = false) {
     const { q, category, limit = 20, offset = 0 } = queryDto;
     const client = this.supabase.getClient();
     const publicUrl = process.env.R2_PUBLIC_URL || '';
-    // 公開搜尋強制只顯示非隱藏文章
     let query = client
       .from('fb_posts')
       .select('*', { count: 'exact' })
       .eq('user_id', userId)
-      .eq('is_hidden', false)
       .order('event_date', { ascending: false });
+    // 公開搜尋強制只顯示非隱藏文章；管理員搜尋則顯示全部（含隱藏）
+    if (!isAdmin) query = query.eq('is_hidden', false);
     if (q) query = query.or(`title.ilike.%${q}%,content.ilike.%${q}%`);
     if (category) query = query.eq('category', category);
     const { data, count, error } = await query.range(
