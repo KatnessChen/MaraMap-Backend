@@ -14,6 +14,12 @@ describe('FbPostsService', () => {
 
   const mockR2Service = {
     delete: jest.fn().mockResolvedValue(undefined),
+    copy: jest.fn().mockResolvedValue(undefined),
+    upload: jest
+      .fn()
+      .mockImplementation((key: string) =>
+        Promise.resolve(`https://cdn.example.com/${key}`),
+      ),
     keyFromUrl: jest.fn((uri: string) =>
       uri?.startsWith('https://cdn.example.com/')
         ? uri.replace('https://cdn.example.com/', '')
@@ -37,6 +43,7 @@ describe('FbPostsService', () => {
     in: jest.fn().mockReturnThis(),
     single: jest.fn().mockReturnThis(),
     update: jest.fn().mockReturnThis(),
+    insert: jest.fn().mockReturnThis(),
     // Make thenable to support await
     then: jest.fn(function (resolve) {
       return resolve({ data: [], count: 0, error: null });
@@ -64,6 +71,10 @@ describe('FbPostsService', () => {
     service = module.get<FbPostsService>(FbPostsService);
     mockR2Service.delete.mockClear();
     mockR2Service.delete.mockResolvedValue(undefined);
+    mockR2Service.upload.mockClear();
+    mockR2Service.copy.mockClear();
+    mockR2Service.copy.mockResolvedValue(undefined);
+    mockSupabaseClient.insert.mockClear();
   });
 
   it('should be defined', () => {
@@ -111,6 +122,16 @@ describe('FbPostsService', () => {
   });
 
   describe('update', () => {
+    // claimTmpMedia builds permanent URIs from R2_PUBLIC_URL (set in prod).
+    const origPublicUrl = process.env.R2_PUBLIC_URL;
+    beforeAll(() => {
+      process.env.R2_PUBLIC_URL = 'https://cdn.example.com';
+    });
+    afterAll(() => {
+      if (origPublicUrl === undefined) delete process.env.R2_PUBLIC_URL;
+      else process.env.R2_PUBLIC_URL = origPublicUrl;
+    });
+
     it('should update a post', async () => {
       const updateDto = { title: 'New' };
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
@@ -120,6 +141,245 @@ describe('FbPostsService', () => {
       const result = await service.update('user-123', '1', updateDto);
       expect(mockSupabaseClient.update).toHaveBeenCalledWith(updateDto);
       expect(result.title).toBe('New');
+    });
+
+    it('claims tmp media, deletes removed R2 objects, keeps unchanged ones, and rewrites cover', async () => {
+      const tmpUri = 'https://cdn.example.com/tmp/user-123/new.png';
+      const permUri =
+        'https://cdn.example.com/your_facebook_activity/posts/media/new.png';
+      const keptUri = 'https://cdn.example.com/manual/user-123/kept.jpg';
+      const removedUri = 'https://cdn.example.com/manual/user-123/gone.jpg';
+
+      // 1st awaited supabase call: SELECT existing media (to diff for cleanup).
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: {
+            media: [
+              { uri: keptUri, type: 'photo' },
+              { uri: removedUri, type: 'photo' },
+            ],
+          },
+          error: null,
+        }),
+      );
+      // 2nd: the UPDATE itself.
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: '1', media: [], title: 'x' }, error: null }),
+      );
+
+      await service.update('user-123', '1', {
+        media: [
+          { uri: keptUri, type: 'photo' },
+          { uri: tmpUri, type: 'photo' },
+        ],
+        cover_image: tmpUri,
+      });
+
+      // tmp item promoted out of tmp/ into the shared media prefix
+      expect(mockR2Service.copy).toHaveBeenCalledWith(
+        'tmp/user-123/new.png',
+        'your_facebook_activity/posts/media/new.png',
+      );
+      // removed object deleted; kept object left alone
+      expect(mockR2Service.delete).toHaveBeenCalledWith(
+        'manual/user-123/gone.jpg',
+      );
+      expect(mockR2Service.delete).not.toHaveBeenCalledWith(
+        'manual/user-123/kept.jpg',
+      );
+      // persisted media has the claimed (permanent) uri + kept uri; cover rewritten
+      const updated = mockSupabaseClient.update.mock.calls.at(-1)![0];
+      expect(updated.media).toEqual([
+        { uri: keptUri, type: 'photo' },
+        { uri: permUri, type: 'photo' },
+      ]);
+      expect(updated.cover_image).toBe(permUri);
+    });
+
+    it('does not touch media/R2 when the patch omits media (e.g. hide toggle)', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: '1', media: [], is_hidden: true }, error: null }),
+      );
+
+      await service.update('user-123', '1', { is_hidden: true });
+
+      expect(mockR2Service.copy).not.toHaveBeenCalled();
+      expect(mockR2Service.delete).not.toHaveBeenCalled();
+      const updated = mockSupabaseClient.update.mock.calls.at(-1)![0];
+      expect(updated).not.toHaveProperty('media');
+    });
+  });
+
+  describe('create', () => {
+    // claimTmpMedia builds permanent URIs from R2_PUBLIC_URL (set in prod).
+    const origPublicUrl = process.env.R2_PUBLIC_URL;
+    beforeAll(() => {
+      process.env.R2_PUBLIC_URL = 'https://cdn.example.com';
+    });
+    afterAll(() => {
+      if (origPublicUrl === undefined) delete process.env.R2_PUBLIC_URL;
+      else process.env.R2_PUBLIC_URL = origPublicUrl;
+    });
+
+    it('inserts a new post scoped to the user with a millisecond fb_timestamp and defaults', async () => {
+      const before = Date.now();
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: { id: 'new-1', media: [], title: '手動文章' },
+          error: null,
+        }),
+      );
+
+      const result = await service.create('user-123', {
+        title: '手動文章',
+        event_date: '2024-05-01',
+        category: '馬拉松',
+      });
+
+      const inserted = mockSupabaseClient.insert.mock.calls[0][0];
+      expect(inserted.user_id).toBe('user-123');
+      expect(inserted.title).toBe('手動文章');
+      expect(inserted.event_date).toBe('2024-05-01');
+      // Millisecond timestamp — well above any FB second-based timestamp.
+      expect(inserted.fb_timestamp).toBeGreaterThanOrEqual(before);
+      // Optional fields default rather than being left undefined.
+      expect(inserted.content).toBe('');
+      expect(inserted.sub_categories).toEqual([]);
+      expect(inserted.tags).toEqual([]);
+      expect(inserted.media).toEqual([]);
+      expect(inserted.is_hidden).toBe(false);
+      expect(inserted.source).toBe('manual');
+      expect(result.id).toBe('new-1');
+    });
+
+    it('throws when supabase returns an error', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, error: { message: 'duplicate key' } }),
+      );
+
+      await expect(
+        service.create('user-123', {
+          title: 'x',
+          event_date: '2024-05-01',
+          category: '旅遊',
+        }),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
+    it('claims tmp media into the permanent path and rewrites uris + cover', async () => {
+      const tmpUri = 'https://cdn.example.com/tmp/user-123/123-abc.png';
+      const permUri =
+        'https://cdn.example.com/your_facebook_activity/posts/media/123-abc.png';
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: 'new-1', media: [] }, error: null }),
+      );
+
+      await service.create('user-123', {
+        title: '有圖文章',
+        event_date: '2024-05-01',
+        category: '旅遊',
+        media: [{ uri: tmpUri, type: 'photo' }],
+        cover_image: tmpUri,
+      });
+
+      expect(mockR2Service.copy).toHaveBeenCalledWith(
+        'tmp/user-123/123-abc.png',
+        'your_facebook_activity/posts/media/123-abc.png',
+      );
+      expect(mockR2Service.delete).toHaveBeenCalledWith(
+        'tmp/user-123/123-abc.png',
+      );
+      const inserted = mockSupabaseClient.insert.mock.calls[0][0];
+      expect(inserted.media).toEqual([{ uri: permUri, type: 'photo' }]);
+      expect(inserted.cover_image).toBe(permUri);
+    });
+
+    it('keeps the tmp uri when the claim copy fails (best-effort)', async () => {
+      const tmpUri = 'https://cdn.example.com/tmp/user-123/x.png';
+      mockR2Service.copy.mockRejectedValueOnce(new Error('R2 down'));
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: 'new-2', media: [] }, error: null }),
+      );
+
+      await service.create('user-123', {
+        title: 't',
+        event_date: '2024-05-01',
+        category: '旅遊',
+        media: [{ uri: tmpUri, type: 'photo' }],
+        cover_image: tmpUri,
+      });
+
+      const inserted = mockSupabaseClient.insert.mock.calls[0][0];
+      expect(inserted.media).toEqual([{ uri: tmpUri, type: 'photo' }]);
+      expect(inserted.cover_image).toBe(tmpUri);
+      expect(mockR2Service.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('uploadMedia', () => {
+    const file = (mimetype: string, size = 1024) =>
+      ({
+        buffer: Buffer.from('media'),
+        mimetype,
+        size,
+        originalname: 'x',
+      }) as Express.Multer.File;
+
+    it('uploads a valid image to R2 and returns key + url + photo type', async () => {
+      const result = await service.uploadMedia('user-123', file('image/png'));
+      expect(mockR2Service.upload).toHaveBeenCalledTimes(1);
+      const [key, , contentType] = mockR2Service.upload.mock.calls[0];
+      expect(key).toMatch(/^tmp\/user-123\/.*\.png$/);
+      expect(contentType).toBe('image/png');
+      expect(result.key).toBe(key);
+      expect(result.url).toBe(`https://cdn.example.com/${key}`);
+      expect(result.type).toBe('photo');
+    });
+
+    it('uploads a valid video to R2 and returns video type', async () => {
+      const result = await service.uploadMedia('user-123', file('video/mp4'));
+      const [key] = mockR2Service.upload.mock.calls[0];
+      expect(key).toMatch(/^tmp\/user-123\/.*\.mp4$/);
+      expect(result.type).toBe('video');
+    });
+
+    it('rejects an unsupported mime type without touching R2', async () => {
+      await expect(
+        service.uploadMedia('user-123', file('application/pdf')),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockR2Service.upload).not.toHaveBeenCalled();
+    });
+
+    it('rejects an image over the 8MB limit without touching R2', async () => {
+      await expect(
+        service.uploadMedia('user-123', file('image/jpeg', 9 * 1024 * 1024)),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockR2Service.upload).not.toHaveBeenCalled();
+    });
+
+    it('accepts a video within the 64MB limit that would exceed the image limit', async () => {
+      const result = await service.uploadMedia(
+        'user-123',
+        file('video/mp4', 40 * 1024 * 1024),
+      );
+      expect(result.type).toBe('video');
+      expect(mockR2Service.upload).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a video over the 64MB limit without touching R2', async () => {
+      await expect(
+        service.uploadMedia('user-123', file('video/mp4', 65 * 1024 * 1024)),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockR2Service.upload).not.toHaveBeenCalled();
+    });
+
+    it('rejects when no file is provided', async () => {
+      await expect(
+        service.uploadMedia(
+          'user-123',
+          undefined as unknown as Express.Multer.File,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

@@ -66,6 +66,52 @@ The `upload-to-r2.js` script handles media migration:
 - `R2_BUCKET_NAME`: Target bucket name in R2
 - `R2_PUBLIC_URL`: Public CDN URL for the bucket
 
+### Admin Manual Uploads & tmp Lifecycle
+
+Besides the bulk ETL path above, the admin "new post" screen (`/admin/new`)
+lets an editor upload images/videos directly through the API
+(`POST /api/v1/posts/upload-media`). To avoid orphaned files from abandoned
+drafts, uploads follow a **staged claim** flow:
+
+1. Uploads land in a **tmp prefix**: `tmp/<userId>/…`.
+2. When the post is actually created, the backend **claims** them — copies each
+   into the permanent `manual/<userId>/…` path, deletes the tmp copy, and
+   rewrites the stored URIs. Anything never claimed (editor closed the tab) is
+   left in tmp.
+3. An R2 **Object Lifecycle rule** sweeps the leftovers, auto-deleting objects
+   under `tmp/` after a retention window (default 7 days).
+
+**One-time setup** — install the lifecycle rule on the bucket (idempotent;
+preserves any other existing rules, only replaces its own by ID):
+
+```bash
+# Needs an ADMIN R2 API token (see note below), not the object-level upload token
+$ node --env-file=.env utils/set-r2-lifecycle.js
+
+# Optional: override the retention window (days)
+$ TMP_LIFECYCLE_DAYS=3 node --env-file=.env utils/set-r2-lifecycle.js
+```
+
+Re-run it whenever the retention window changes; it is safe to run repeatedly.
+
+Verify a rule (set via script or dashboard) is in effect — read-only, also needs
+an admin token:
+
+```bash
+$ node --env-file=.env utils/set-r2-lifecycle.js --check
+```
+
+> **Permissions**: lifecycle config is a *bucket-level* operation, so it needs an
+> R2 API token with **Admin Read & Write** — the **Object Read & Write** token
+> used for uploads returns `Access Denied`. Either run the script once with a
+> temporary admin token (inline: `R2_ACCESS_KEY_ID=<admin> R2_SECRET_ACCESS_KEY=<admin> node --env-file=.env utils/set-r2-lifecycle.js`),
+> or skip the script entirely and add the rule in the Cloudflare dashboard:
+> **R2 → bucket → Settings → Object lifecycle rules**, prefix `tmp/`,
+> delete after 7 days.
+
+**Per-type upload limits**: images ≤ 8 MB (`jpg/png/webp/gif`), videos ≤ 64 MB
+(`mp4/mov/webm`), enforced both client-side (instant feedback) and server-side.
+
 ## Environments
 
 ## Infrastructure

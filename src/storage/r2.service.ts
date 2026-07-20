@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  DeleteObjectCommand,
+  PutObjectCommand,
+  CopyObjectCommand,
+} from '@aws-sdk/client-s3';
 
 @Injectable()
 export class R2Service {
@@ -31,6 +36,44 @@ export class R2Service {
     }
     if (!uri.startsWith('http')) return uri;
     return null;
+  }
+
+  /**
+   * Uploads a buffer to R2 and returns the absolute public URL. Unlike
+   * `delete`, this throws on failure — an upload the caller believes
+   * succeeded but silently didn't would leave a post pointing at a
+   * missing image.
+   */
+  async upload(
+    key: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<string> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
+    return this.publicUrl ? `${this.publicUrl}/${key}` : key;
+  }
+
+  /**
+   * Server-side copy within the bucket. Throws on failure so the caller can
+   * decide whether to keep the source (R2/S3 have no native move — a "move"
+   * is copy + delete). Keys here are ASCII (prefix + timestamp + uuid), so
+   * CopySource needs no percent-encoding of the path.
+   */
+  async copy(srcKey: string, destKey: string): Promise<void> {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        CopySource: `${this.bucket}/${srcKey}`,
+        Key: destKey,
+      }),
+    );
   }
 
   /** Best-effort delete — never throws, only logs. Callers rely on this. */

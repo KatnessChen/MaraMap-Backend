@@ -11,10 +11,14 @@ import {
   UseGuards,
   Req,
   Header,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { FbPostsService } from './fb-posts.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UpdateFbPostDto } from './update-fb-post.dto';
+import { CreateFbPostDto } from './create-fb-post.dto';
 import { FuzzySearchDto } from './fb-post.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { Public } from '../auth/decorators/public.decorator';
@@ -103,6 +107,35 @@ export class FbPostsController {
   ) {
     const targetUserId = this.getTargetUserId(userId);
     return this.fbPostsService.findOne(targetUserId, id, req.isAdmin);
+  }
+
+  @Post('posts/upload-media')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '上傳文章圖片/影片至 R2 (僅限管理員)' })
+  @UseInterceptors(
+    // Hard memory guard = the largest allowed media (video). Per-type limits
+    // (image 8MB / video 64MB) are enforced in the service for clear errors.
+    FileInterceptor('file', {
+      limits: { fileSize: FbPostsService.VIDEO_MAX_BYTES },
+    }),
+  )
+  async uploadPostMedia(
+    @UploadedFile() file: Express.Multer.File,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.uploadMedia(targetUserId, file);
+  }
+
+  @Post('posts')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '新增單篇文章 (僅限管理員)' })
+  async createPost(
+    @Body() createDto: CreateFbPostDto,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId);
+    return this.fbPostsService.create(targetUserId, createDto);
   }
 
   @Patch('posts/:id')

@@ -144,6 +144,7 @@ async function importData() {
       sub_categories: p.sub_categories || [],
       media: mediaByTimestamp.get(String(p.timestamp)) || [],
       metadata: finalMetadata,
+      source: 'facebook',
     };
   });
 

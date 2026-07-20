@@ -13,6 +13,8 @@ describe('FbPostsController', () => {
     findAll: jest.fn(),
     findOne: jest.fn(),
     fuzzySearch: jest.fn(),
+    create: jest.fn(),
+    uploadMedia: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
     findLocations: jest.fn(),
@@ -138,6 +140,26 @@ describe('FbPostsController', () => {
     it('should call service.getCategories', async () => {
       await controller.getCategories('user-1');
       expect(service.getCategories).toHaveBeenCalledWith('user-1');
+    });
+  });
+
+  describe('createPost', () => {
+    it('should call service.create with the target user and dto', async () => {
+      const dto = {
+        title: '手動文章',
+        event_date: '2024-05-01',
+        category: '馬拉松',
+      };
+      await controller.createPost(dto, 'user-1');
+      expect(service.create).toHaveBeenCalledWith('user-1', dto);
+    });
+  });
+
+  describe('uploadPostMedia', () => {
+    it('should call service.uploadMedia with the target user and file', async () => {
+      const file = { mimetype: 'image/png' } as Express.Multer.File;
+      await controller.uploadPostMedia(file, 'user-1');
+      expect(service.uploadMedia).toHaveBeenCalledWith('user-1', file);
     });
   });
 });

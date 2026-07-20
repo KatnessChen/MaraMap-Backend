@@ -9,9 +9,18 @@ import {
 } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { randomUUID } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateFbPostDto } from './update-fb-post.dto';
+import { CreateFbPostDto } from './create-fb-post.dto';
 import { R2Service } from '../storage/r2.service';
+
+// Permanent media live under the same R2 prefix the Facebook ETL uploads to
+// (see utils/upload-to-r2.js), so manually-added and imported media share one
+// consistent path convention. Provenance is tracked by fb_posts.source, not by
+// the storage path. tmp uploads stage under `tmp/` first (swept by the
+// R2 lifecycle rule) and are copied here on create/save.
+const PERMANENT_MEDIA_PREFIX = 'your_facebook_activity/posts/media';
 
 @Injectable()
 export class FbPostsService {
@@ -621,13 +630,211 @@ export class FbPostsService {
     return this.normalizePost(data, publicUrl);
   }
 
+  /**
+   * 後台手動新增單篇文章。fb_timestamp 以毫秒級 Date.now() 產生：FB 匯入的
+   * 時間戳為「秒」（~1e9），毫秒級（~1.7e12）不會與其相撞，也滿足
+   * (user_id, fb_timestamp) 的唯一鍵。
+   */
+  async create(userId: string, dto: CreateFbPostDto) {
+    const publicUrl = process.env.R2_PUBLIC_URL || '';
+    const client = this.supabase.getClient();
+    // Promote any freshly-uploaded media out of the tmp prefix before it's
+    // persisted, so the row never stores a tmp URI that lifecycle would reap.
+    const { media, cover_image } = await this.claimTmpMedia(
+      userId,
+      dto.media ?? [],
+      dto.cover_image,
+    );
+    const row = {
+      user_id: userId,
+      fb_timestamp: Date.now(),
+      event_date: dto.event_date,
+      title: dto.title,
+      content: dto.content ?? '',
+      category: dto.category,
+      sub_categories: dto.sub_categories ?? [],
+      tags: dto.tags ?? [],
+      media,
+      metadata: dto.metadata ?? {},
+      cover_image,
+      is_hidden: dto.is_hidden ?? false,
+      is_personal_best: dto.is_personal_best ?? false,
+      source: 'manual',
+    };
+    const { data, error } = await client
+      .from('fb_posts')
+      .insert(row)
+      .select()
+      .single();
+    if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(`pb:${userId}`);
+    return this.normalizePost(data, publicUrl);
+  }
+
+  private readonly IMAGE_MIME_EXT: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+  };
+  private readonly VIDEO_MIME_EXT: Record<string, string> = {
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'video/webm': 'webm',
+  };
+
+  // Per-type ceilings, sized from the real corpus (images top out ~4.4MB,
+  // videos ~58MB). The controller's multer fileSize limit is the hard memory
+  // guard; these give a friendly per-type message. VIDEO_MAX_BYTES is the
+  // source of truth for the interceptor limit too.
+  static readonly IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+  static readonly VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+
+  /**
+   * 把後台上傳的圖片/影片存到 R2，回傳完整網址（可直接寫入 media[].uri /
+   * cover_image；normalizePost 對 http 開頭原樣放行）與媒體型別。
+   */
+  async uploadMedia(userId: string, file: Express.Multer.File) {
+    if (!file || !file.buffer) {
+      throw new BadRequestException('沒有收到檔案。');
+    }
+    const imageExt = this.IMAGE_MIME_EXT[file.mimetype];
+    const videoExt = this.VIDEO_MIME_EXT[file.mimetype];
+
+    let ext: string;
+    let type: 'photo' | 'video';
+    let maxBytes: number;
+    if (imageExt) {
+      ext = imageExt;
+      type = 'photo';
+      maxBytes = FbPostsService.IMAGE_MAX_BYTES;
+    } else if (videoExt) {
+      ext = videoExt;
+      type = 'video';
+      maxBytes = FbPostsService.VIDEO_MAX_BYTES;
+    } else {
+      throw new BadRequestException(
+        '僅支援 JPG / PNG / WebP / GIF 圖片，或 MP4 / MOV / WebM 影片。',
+      );
+    }
+
+    const size = file.size ?? file.buffer.length;
+    if (size > maxBytes) {
+      const mb = Math.round(maxBytes / 1024 / 1024);
+      throw new BadRequestException(
+        `${type === 'photo' ? '圖片' : '影片'}不可超過 ${mb}MB。`,
+      );
+    }
+
+    // Uploads land in a tmp prefix and are "claimed" into the permanent path
+    // when a post is actually created (see claimTmpMedia). Anything never
+    // claimed (abandoned drafts) is swept by the R2 lifecycle rule on
+    // `tmp/` — see utils/set-r2-lifecycle.js.
+    const key = `tmp/${userId}/${Date.now()}-${randomUUID()}.${ext}`;
+    const url = await this.r2.upload(key, file.buffer, file.mimetype);
+    return { key, url, type };
+  }
+
+  /**
+   * Moves any media still sitting in this user's tmp prefix into the permanent
+   * `manual/<userId>/` path and rewrites their URIs. Best-effort per item: if a
+   * copy fails the original tmp URI is kept (the object still exists and the
+   * lifecycle rule will eventually reclaim it) rather than failing the whole
+   * post creation.
+   */
+  private async claimTmpMedia(
+    userId: string,
+    media: Array<{ uri: string; type: string }>,
+    coverImage: string | null | undefined,
+  ): Promise<{
+    media: Array<{ uri: string; type: string }>;
+    cover_image: string | null;
+  }> {
+    const tmpPrefix = `tmp/${userId}/`;
+    const publicUrl = process.env.R2_PUBLIC_URL || '';
+    const uriMap = new Map<string, string>(); // old tmp uri -> permanent uri
+
+    const newMedia: Array<{ uri: string; type: string }> = [];
+    for (const m of media) {
+      const key = this.r2.keyFromUrl(m?.uri);
+      if (!key || !key.startsWith(tmpPrefix)) {
+        newMedia.push(m);
+        continue;
+      }
+      const destKey = `${PERMANENT_MEDIA_PREFIX}/${key.slice(tmpPrefix.length)}`;
+      try {
+        await this.r2.copy(key, destKey);
+        await this.r2.delete(key); // best-effort; lifecycle covers leftovers
+        const newUri = publicUrl ? `${publicUrl}/${destKey}` : destKey;
+        uriMap.set(m.uri, newUri);
+        newMedia.push({ ...m, uri: newUri });
+      } catch (err: any) {
+        this.logger.warn(
+          `claim tmp media failed for ${key}: ${err?.message || err}`,
+        );
+        newMedia.push(m);
+      }
+    }
+
+    const newCover =
+      coverImage && uriMap.has(coverImage)
+        ? uriMap.get(coverImage)!
+        : (coverImage ?? null);
+    return { media: newMedia, cover_image: newCover };
+  }
+
   async update(userId: string, id: string, updateDto: UpdateFbPostDto) {
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     const client = this.supabase.getClient();
 
+    const payload: Record<string, any> = { ...updateDto };
+
+    // When media is part of the edit: promote any freshly-uploaded (tmp) items
+    // to the permanent path, rewrite the cover if it pointed at one, and delete
+    // the R2 objects for media removed in this edit. Diff by R2 key (not raw
+    // URI) so the relative↔absolute forms of the same object aren't mistaken
+    // for a removal. PATCHes that don't send media (e.g. hide/unhide) skip all
+    // of this and leave media untouched.
+    if (updateDto.media !== undefined) {
+      const claimed = await this.claimTmpMedia(
+        userId,
+        updateDto.media,
+        updateDto.cover_image,
+      );
+      payload.media = claimed.media;
+      if (updateDto.cover_image !== undefined) {
+        payload.cover_image = claimed.cover_image;
+      }
+
+      const { data: existing } = await client
+        .from('fb_posts')
+        .select('media')
+        .eq('user_id', userId)
+        .eq('id', id)
+        .single();
+      const oldMedia = Array.isArray(existing?.media) ? existing.media : [];
+      const newKeys = new Set(
+        payload.media
+          .map((m: any) => this.r2.keyFromUrl(m?.uri))
+          .filter(Boolean),
+      );
+      for (const m of oldMedia) {
+        const key = this.r2.keyFromUrl(m?.uri);
+        if (key && !newKeys.has(key)) {
+          try {
+            await this.r2.delete(key);
+          } catch (err: any) {
+            this.logger.warn(
+              `R2 cleanup skipped for ${m?.uri}: ${err?.message || err}`,
+            );
+          }
+        }
+      }
+    }
+
     const { data, error } = await client
       .from('fb_posts')
-      .update(updateDto)
+      .update(payload)
       .eq('user_id', userId)
       .eq('id', id)
       .select()

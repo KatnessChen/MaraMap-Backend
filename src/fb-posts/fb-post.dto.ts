@@ -31,6 +31,7 @@ export class FbPostDto {
   id: string;
   user_id: string;
   fb_timestamp: number;
+  source: 'facebook' | 'manual';
   event_date: string;
   title: string;
   content: string;

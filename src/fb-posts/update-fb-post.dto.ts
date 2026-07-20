@@ -60,6 +60,13 @@ export class UpdateFbPostDto {
   @IsOptional()
   cover_image?: string;
 
+  @ApiPropertyOptional({
+    description: '圖片/影片清單，元素為 { uri, type } 物件',
+  })
+  @IsArray()
+  @IsOptional()
+  media?: Array<{ uri: string; type: string }>;
+
   @ApiPropertyOptional()
   @IsObject()
   @IsOptional()
