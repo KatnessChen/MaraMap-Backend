@@ -62,6 +62,9 @@ importers:
       jwks-rsa:
         specifier: ^3.2.2
         version: 3.2.2
+      multer:
+        specifier: ^2.0.2
+        version: 2.0.2
       node-fetch:
         specifier: ^3.3.2
         version: 3.3.2
