@@ -495,9 +495,11 @@ describe('FbPostsService', () => {
           title: 'Race',
           event_date: '2026-01-01',
           category: 'marathon',
-          media: [{ lat: 25.0, lng: 121.0, uri: 'img.jpg', type: 'photo' }],
-          // findLocations selects country via the `country:metadata->>country`
-          // alias, so it reads a top-level `country`, not `metadata.country`.
+          // findLocations reads the `rep_media` computed column (see the
+          // fb_posts_rep_media() Postgres function), not the raw media array.
+          rep_media: { lat: 25.0, lng: 121.0, uri: 'img.jpg', photo_count: 1 },
+          // country comes via the `country:metadata->>country` select alias,
+          // i.e. a top-level `country`, not `metadata.country`.
           country: 'Taiwan',
           metadata: { country: 'Taiwan' },
         },
