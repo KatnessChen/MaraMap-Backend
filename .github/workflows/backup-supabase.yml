@@ -68,7 +68,52 @@ jobs:
           fi
           STAMP=$(date -u +%Y-%m-%d)
           echo "STAMP=$STAMP" >> "$GITHUB_ENV"
-          mkdir -p backup
+          mkdir -p backup cfg
+
+          # Parse the connection string ourselves instead of handing the raw URL
+          # to pg_dump. Supabase passwords routinely contain %, & and @ — all
+          # illegal in an un-encoded URL — which makes pg_dump die with
+          # "invalid percent-encoded token". Python's urlsplit separates the host
+          # at the LAST '@' and the user/password at the FIRST ':', recovering
+          # every component whatever the password contains; the password is then
+          # delivered via PGPASSWORD, where URL-encoding never applies.
+          python3 - "$SUPABASE_DB_URL" <<'PY'
+          import sys
+          from urllib.parse import urlsplit
+          u = urlsplit(sys.argv[1])
+          vals = {
+              "host": u.hostname or "",
+              "port": str(u.port or 5432),
+              "user": u.username or "",
+              "db": (u.path or "/postgres").lstrip("/") or "postgres",
+              "password": u.password or "",
+          }
+          for k, v in vals.items():
+              with open(f"cfg/{k}", "w") as f:
+                  f.write(v)
+          PY
+
+          # $(cat ...) inside double quotes is assigned verbatim — no re-parsing —
+          # so special characters in the password are safe.
+          export PGHOST="$(cat cfg/host)"
+          export PGPORT="$(cat cfg/port)"
+          export PGUSER="$(cat cfg/user)"
+          export PGDATABASE="$(cat cfg/db)"
+          export PGPASSWORD="$(cat cfg/password)"
+          export PGSSLMODE=require
+          rm -rf cfg
+
+          if echo "$PGHOST" | grep -q 'db\..*\.supabase\.co'; then
+            echo "::error::PGHOST is $PGHOST — that is the DIRECT (IPv6-only) endpoint. Use the Session pooler host (*.pooler.supabase.com:5432)."
+            exit 1
+          fi
+          echo "Connecting to $PGHOST:$PGPORT as $PGUSER (db=$PGDATABASE)"
+
+          # Use the newest installed client explicitly. The postgresql-common
+          # pg_dump wrapper otherwise resolved to v16 even with v17 installed,
+          # and a client older than the server is refused outright.
+          PGDUMP=$(ls -d /usr/lib/postgresql/*/bin/pg_dump | sort -V | tail -1)
+          echo "Using $($PGDUMP --version)"
 
           # --schema=public only: the managed auth/storage/realtime schemas are
           # not fully dumpable by the project role, and attempting them makes the
@@ -76,7 +121,7 @@ jobs:
           # auth.users is NOT in here, so the admin login has to be recreated.
           # All application data (fb_posts, participant_stats, page_views) lives
           # in public and IS covered.
-          pg_dump "$SUPABASE_DB_URL" \
+          "$PGDUMP" \
             --schema=public \
             --no-owner \
             --no-privileges \
