@@ -33,9 +33,10 @@
 
 ## 首次部署需要做的事
 
-1. **R2 CORS**（一次性）：presigned 直傳需要允許前端 origin 的 PUT：
+1. **R2 CORS**（一次性 — ✅ 已於 2026-07-24 設定完成，含 localhost 與正式網域）：
+   presigned 直傳需要允許前端 origin 的 PUT：
    ```bash
-   node --env-file=.env etl_cloud/setup-r2-cors.js https://<前端正式網域>
+   node --env-file=.env etl_cloud/setup-r2-cors.js https://maramap.vizino.ai
    ```
    （`http://localhost:3000` 會自動包含。）
 
@@ -45,7 +46,7 @@
    ```json
    [
      {
-       "AllowedOrigins": ["http://localhost:3000", "https://<前端正式網域>"],
+       "AllowedOrigins": ["http://localhost:3000", "https://maramap.vizino.ai"],
        "AllowedMethods": ["PUT"],
        "AllowedHeaders": ["content-type"],
        "ExposeHeaders": ["etag"],
