@@ -1,5 +1,11 @@
 node_modules
 dist
+# etl_local scripts ship in the image, but never the local pipeline data —
+# raw/ alone can hold tens of GB of extracted exports on a dev machine.
+etl_local/01_ingest/raw
+etl_local/**/output
+test-report
+test-results
 .git
 .github
 .env

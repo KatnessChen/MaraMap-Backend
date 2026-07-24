@@ -39,7 +39,7 @@ async function importData() {
   const filePath = path.join(__dirname, `../05_merge/output/${BATCH}/merged.json`);
   if (!fs.existsSync(filePath)) {
     console.error('⚠️ Error: merged.json not found. Please run the merge step first.');
-    return;
+    process.exit(1);
   }
 
   const rawData = fs.readFileSync(filePath, 'utf8');
@@ -171,18 +171,27 @@ async function importData() {
 
   if (fetchError) {
     console.error('❌ Failed to fetch existing posts:', fetchError.message);
-    return;
+    process.exit(1);
   }
 
   const existingSignatures = new Set(
     (existingRows || []).map((r) => postSignature(r.fb_timestamp, r.title, r.content, r.media))
+  );
+  // Signature alone can't recognise a re-imported post once the pipeline has
+  // rewritten its title/content/media (analyze retitles, upload-to-r2 swaps
+  // URIs) — the signatures never match, the "new" post then collides with the
+  // DB's (user_id, fb_timestamp) unique key, and the whole bulk insert dies.
+  // The DB can only ever hold one row per (user_id, fb_timestamp), so a
+  // timestamp that's already there is by definition not importable: skip it.
+  const existingTimestamps = new Set(
+    (existingRows || []).map((r) => Number(r.fb_timestamp))
   );
 
   const newPosts = [];
   const skipped = [];
   uniquePosts.forEach((post) => {
     const sig = postSignature(post.fb_timestamp, post.title, post.content, post.media);
-    if (existingSignatures.has(sig)) {
+    if (existingSignatures.has(sig) || existingTimestamps.has(Number(post.fb_timestamp))) {
       skipped.push(post);
     } else {
       newPosts.push(post);
@@ -214,8 +223,10 @@ async function importData() {
   if (safePosts.length > 0) {
     const { error } = await supabase.from('fb_posts').insert(safePosts);
     if (error) {
+      // Exit non-zero so the pipeline stops here instead of running the
+      // downstream stages against posts that never made it into the DB.
       console.error('❌ Bulk import failed:', error.message);
-      return;
+      process.exit(1);
     }
     insertedCount += safePosts.length;
   }

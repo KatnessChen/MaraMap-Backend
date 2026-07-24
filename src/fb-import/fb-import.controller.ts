@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   Body,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -9,23 +8,12 @@ import {
   Param,
   Post,
   Res,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiBody,
-  ApiConsumes,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import * as os from 'os';
-import * as crypto from 'crypto';
 import { AdminGuard } from '../auth/guards/admin.guard';
+import { R2Service } from '../storage/r2.service';
 import { FbImportService } from './fb-import.service';
 import { CategoryEdit } from './pipeline-events';
 
@@ -38,10 +26,10 @@ const BATCH_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
  * disconnect must not disturb the pipeline: the returned writer drops events
  * once the socket is gone (writing to a destroyed response emits an unhandled
  * 'error' that would take down the dev server) while the generator keeps
- * running to completion, leaving the batch resumable on disk.
+ * running to completion, leaving the batch resumable in R2.
  */
 function openEventStream(res: Response): (event: unknown) => void {
-  res.setTimeout(0); // Gemini calls, R2 uploads and rate-limited geocoding take many minutes
+  res.setTimeout(0); // Gemini calls, R2 transfers and rate-limited geocoding take many minutes
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Transfer-Encoding', 'chunked');
   res.setHeader('Cache-Control', 'no-cache');
@@ -58,69 +46,43 @@ function closeEventStream(res: Response): void {
   if (!res.writableEnded && !res.destroyed) res.end();
 }
 
-const fbImportMulterOptions = {
-  storage: diskStorage({
-    destination: os.tmpdir(),
-    filename: (
-      _req: unknown,
-      _file: Express.Multer.File,
-      cb: (err: Error | null, filename: string) => void,
-    ) =>
-      cb(
-        null,
-        `fb-import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.zip`,
-      ),
-  }),
-  limits: { fileSize: 1024 * 1024 * 1024 }, // 1 GiB ceiling — real exports run "a few hundred MB"
-  fileFilter: (
-    _req: unknown,
-    file: Express.Multer.File,
-    cb: (err: Error | null, accept: boolean) => void,
-  ) => {
-    if (!/\.zip$/i.test(file.originalname)) {
-      return cb(new BadRequestException('僅接受 .zip 檔案。'), false);
-    }
-    cb(null, true);
-  },
-};
-
 @ApiTags('admin')
 @Controller('admin/fb-import')
 @UseGuards(AdminGuard)
 export class FbImportController {
-  constructor(private readonly fbImportService: FbImportService) {}
+  constructor(
+    private readonly fbImportService: FbImportService,
+    private readonly r2: R2Service,
+  ) {}
 
-  @Post()
+  @Post('upload-url')
   @ApiBearerAuth('admin-token')
   @ApiOperation({
-    summary: '上傳 Facebook 匯出 zip 並執行完整匯入流程（僅限本機開發環境）',
+    summary:
+      '產生 presigned URL 讓瀏覽器把 Facebook 匯出 zip 直接上傳到 R2（繞過 Cloud Run 32MB 請求上限）',
   })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: { file: { type: 'string', format: 'binary' } },
-    },
+  async createUploadUrl() {
+    const batch = this.fbImportService.generateBatchName();
+    const key = this.fbImportService.zipKey(batch);
+    const url = await this.r2.presignPut(key, 'application/zip');
+    return { batch, key, url };
+  }
+
+  @Post(':batch/prepare')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({
+    summary:
+      '解析已上傳到 R2 的 zip 並執行前半流程（解壓 JSON → ingest → media 暫存 → AI 分類），完成後暫停等待審核',
   })
-  @UseInterceptors(FileInterceptor('file', fbImportMulterOptions))
-  async importFbExport(
-    @UploadedFile() file: Express.Multer.File,
-    @Res() res: Response,
-  ) {
-    if (!file) throw new BadRequestException('缺少上傳檔案（file）。');
-    if (!this.fbImportService.isEtlAvailable()) {
-      throw new ConflictException(
-        '此功能僅限本機開發環境使用（etl_local/ 未包含在部署的容器中）。請以 npm run start:dev 在本機執行後台再試一次。',
-      );
+  async prepareFbImport(@Param('batch') batch: string, @Res() res: Response) {
+    if (!BATCH_NAME_PATTERN.test(batch)) {
+      throw new BadRequestException('無效的 batch 名稱。');
     }
 
     const emit = openEventStream(res);
-    const batch = this.fbImportService.generateBatchName();
-
     try {
       for await (const event of this.fbImportService.runPreparePipeline(
         batch,
-        file.path,
       )) {
         emit(event);
       }
@@ -140,18 +102,18 @@ export class FbImportController {
   @ApiOperation({
     summary: '列出已解析但尚未完成匯入的 batch（供關閉頁面後接續）',
   })
-  listPending() {
-    return { batches: this.fbImportService.listResumableBatches() };
+  async listPending() {
+    return { batches: await this.fbImportService.listResumableBatches() };
   }
 
   @Get(':batch/review')
   @ApiBearerAuth('admin-token')
   @ApiOperation({ summary: '取回指定 batch 的分類結果以繼續審核' })
-  getReview(@Param('batch') batch: string) {
+  async getReview(@Param('batch') batch: string) {
     if (!BATCH_NAME_PATTERN.test(batch)) {
       throw new BadRequestException('無效的 batch 名稱。');
     }
-    const review = this.fbImportService.readReview(batch);
+    const review = await this.fbImportService.readReview(batch);
     if (!review) throw new NotFoundException('找不到這個匯入批次。');
     return review;
   }
@@ -160,14 +122,11 @@ export class FbImportController {
   @ApiBearerAuth('admin-token')
   @ApiOperation({
     summary:
-      '取消未完成的匯入，將該批次的本機檔案移至垃圾桶（不影響已寫入資料庫的文章）',
+      '取消未完成的匯入，刪除該批次在 R2 的所有暫存檔（不影響已寫入資料庫的文章與已發佈的媒體）',
   })
-  cancelBatch(@Param('batch') batch: string) {
+  async cancelBatch(@Param('batch') batch: string) {
     if (!BATCH_NAME_PATTERN.test(batch)) {
       throw new BadRequestException('無效的 batch 名稱。');
-    }
-    if (!this.fbImportService.isEtlAvailable()) {
-      throw new ConflictException('此功能僅限本機開發環境使用。');
     }
     return this.fbImportService.cancelBatch(batch);
   }
@@ -176,7 +135,7 @@ export class FbImportController {
   @ApiBearerAuth('admin-token')
   @ApiOperation({
     summary:
-      '確認分類後完成匯入（03_analyze → 04_format → 05_merge → 06_import → R2 上傳 → 07_trips → 08_geocode）',
+      '確認分類後完成匯入（03_analyze → 04_format → 05_merge → 06_import → 發佈媒體 → 07_trips → 08_geocode）',
   })
   async confirmFbImport(
     @Param('batch') batch: string,
@@ -186,14 +145,8 @@ export class FbImportController {
     if (!BATCH_NAME_PATTERN.test(batch)) {
       throw new BadRequestException('無效的 batch 名稱。');
     }
-    if (!this.fbImportService.isEtlAvailable()) {
-      throw new ConflictException(
-        '此功能僅限本機開發環境使用（etl_local/ 未包含在部署的容器中）。請以 npm run start:dev 在本機執行後台再試一次。',
-      );
-    }
 
     const emit = openEventStream(res);
-
     try {
       for await (const event of this.fbImportService.runFinalizePipeline(
         batch,
