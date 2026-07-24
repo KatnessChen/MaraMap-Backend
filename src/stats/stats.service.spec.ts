@@ -174,5 +174,27 @@ describe('StatsService', () => {
 
       expect(mockSupabaseClient.upsert).not.toHaveBeenCalled();
     });
+
+    it('excludes hidden posts', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], error: null }),
+      );
+
+      await service.refreshAllStats();
+
+      expect(mockSupabaseClient.eq).toHaveBeenCalledWith('is_hidden', false);
+    });
+  });
+
+  describe('refreshAfterMutation', () => {
+    it('swallows errors so a stats failure cannot fail the post write', async () => {
+      mockSupabaseClient.then.mockImplementationOnce(() => {
+        throw new Error('supabase down');
+      });
+
+      await expect(
+        service.refreshAfterMutation('post create abc'),
+      ).resolves.toBeUndefined();
+    });
   });
 });

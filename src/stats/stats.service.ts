@@ -12,12 +12,37 @@ export class StatsService {
   constructor(private readonly supabase: SupabaseService) {}
 
   /**
-   * Automatically refresh all participant stats at midnight every day.
+   * Safety net for writes this service cannot observe. The per-write hooks below
+   * cover everything that goes through the API, but the ETL scripts under etl/
+   * write to Supabase directly as child processes (e.g. rerun-albums.js), so
+   * nothing in Nest fires for them. Without this, such a run leaves the numbers
+   * wrong until somebody notices; with it, they self-correct overnight.
    */
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleCron() {
     this.logger.debug('Running daily participant stats refresh...');
     await this.refreshAllStats();
+  }
+
+  /**
+   * Recompute stats right after something wrote to fb_posts, so the numbers are
+   * correct on the next page load instead of after the nightly cron. Stats are
+   * derived data and a full recompute is cheap (~500 rows, two upserts), so
+   * there is no reason to make an edit wait until midnight to show up.
+   *
+   * Never throws. A stats failure must not fail the mutation that triggered it —
+   * the post write is the user's actual intent and has already committed. The
+   * next write, the cron, or a manual POST /stats/refresh reconciles.
+   */
+  async refreshAfterMutation(reason: string): Promise<void> {
+    try {
+      await this.refreshAllStats();
+      this.logger.log(`Participant stats refreshed after ${reason}`);
+    } catch (err) {
+      this.logger.error(
+        `Stats refresh after ${reason} failed: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**
@@ -110,9 +135,13 @@ export class StatsService {
   async refreshAllStats() {
     const client = this.supabase.getClient();
 
+    // is_hidden posts are excluded everywhere else (getCountryCount above,
+    // findLocations, getCategories) — this query was the one that missed it,
+    // so hidden races inflated fm_count past what the list actually shows.
     const { data: posts, error } = await client
       .from('fb_posts')
       .select('metadata, category')
+      .eq('is_hidden', false)
       .neq('metadata', '{}');
 
     if (error) {
@@ -134,7 +163,6 @@ export class StatsService {
         if (!statsMap.has(name)) {
           statsMap.set(name, {
             participant_name: name,
-            total_distance_km: 0,
             fm_count: 0,
             hm_count: 0,
             um_count: 0,
@@ -148,12 +176,7 @@ export class StatsService {
         const pStats = p.stats || {};
         const distanceType = p.distance || '';
 
-        // 1. Cumulative Distance (Always accumulate if available)
-        if (pStats.distance_km) {
-          current.total_distance_km += parseFloat(pStats.distance_km);
-        }
-
-        // 2. Calculated Counts (ONLY for marathon category)
+        // 1. Calculated Counts (ONLY for marathon category)
         if (category === '馬拉松') {
           if (distanceType.includes('超馬') || pStats.distance_km > 45) {
             current.calculated_fm += 1;
@@ -171,7 +194,7 @@ export class StatsService {
           }
         }
 
-        // 3. Manual/Extracted Overrides (Take the maximum found in text)
+        // 2. Manual/Extracted Overrides (Take the maximum found in text)
         // Keep FM and HM overrides, skip UM overrides as previously discussed
         if (pStats.FM_count)
           current.fm_count = Math.max(current.fm_count, pStats.FM_count);
@@ -180,11 +203,10 @@ export class StatsService {
       });
     });
 
-    // 4. Final Reconcile
+    // 3. Final Reconcile
     for (const [name, stats] of statsMap.entries()) {
       const finalStats = {
         participant_name: name,
-        total_distance_km: stats.total_distance_km,
         // FM_count: Use max of extracted OR calculated (Davis's habit)
         fm_count: Math.max(stats.fm_count, stats.calculated_fm),
         // HM_count: Use max of extracted OR calculated
