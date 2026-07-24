@@ -6,6 +6,11 @@ export interface ReviewPost {
   text: string | null;
   category: string;
   sub_categories: string[];
+  // Staged-media URLs for the review preview. The bytes live under this batch's
+  // R2 media-staging prefix (public but at an unguessable key) until confirm
+  // publishes them to their final keys — so the admin can eyeball photos before
+  // committing the import.
+  media?: { url: string; type: string }[];
 }
 
 /** An admin's correction to one post's classification. */

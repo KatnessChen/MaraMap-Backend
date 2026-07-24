@@ -219,7 +219,7 @@ export class FbImportService {
       // Everything the finalize half needs must be durable before we pause —
       // the confirm request may hit a different instance (or a different day).
       await this.persistWorkspace(batch);
-      const posts = (await this.readClassified(batch)) ?? [];
+      const posts = await this.buildReviewPosts(batch);
       await this.writeState(batch, 'review', posts.length);
       yield { type: 'ready-for-review', batch, posts };
     } catch (err) {
@@ -236,6 +236,7 @@ export class FbImportService {
   async *runFinalizePipeline(
     batch: string,
     edits: CategoryEdit[],
+    skipped: number[] = [],
   ): AsyncGenerator<PipelineEvent> {
     this.capturedOutput = [];
     const env = { ...process.env, BATCH: batch };
@@ -254,17 +255,23 @@ export class FbImportService {
         line: `Hydrated ${hydrated} workspace file(s) from R2`,
       };
 
-      if (edits.length > 0) {
-        const applied = await this.applyCategoryEdits(batch, edits);
-        yield {
-          type: 'log',
-          stage: 'review',
-          stream: 'stdout',
-          line: `Applied ${applied} category edit(s) to classified.json`,
-        };
+      // The admin's review is authoritative: category corrections are written
+      // into classified.json, and any skipped posts are dropped from it so the
+      // analyze→merge→import chain never sees them (their staged media is later
+      // cleaned up with the rest of the batch prefix, and publish_media only
+      // touches posts that actually reached the DB).
+      const decisions = await this.applyReviewDecisions(batch, edits, skipped);
+      yield {
+        type: 'log',
+        stage: 'review',
+        stream: 'stdout',
+        line: `套用審核結果：${decisions.edited} 篇改分類、略過 ${decisions.skipped} 篇，剩 ${decisions.remaining} 篇待匯入。`,
+      };
+      if (decisions.remaining === 0) {
+        throw new Error('所有文章都被略過，沒有可匯入的內容。');
       }
 
-      postCount = ((await this.readClassified(batch)) ?? []).length;
+      postCount = decisions.remaining;
       await this.writeState(batch, 'finalizing', postCount);
 
       for (const stage of FINALIZE_SPAWN_STAGES) {
@@ -707,7 +714,36 @@ export class FbImportService {
   ): Promise<{ state: ImportState; posts: ReviewPost[] } | null> {
     const state = await this.readState(batch);
     if (!state) return null;
-    return { state, posts: (await this.readClassified(batch)) ?? [] };
+    return { state, posts: await this.buildReviewPosts(batch) };
+  }
+
+  /**
+   * Review posts enriched with staged-media preview URLs. classified.json holds
+   * the text/category; media.json (from ingest) holds each post's media, whose
+   * bytes are already in this batch's R2 staging prefix — so the URL is just the
+   * public bucket URL + staging key, no publish needed.
+   */
+  private async buildReviewPosts(batch: string): Promise<ReviewPost[]> {
+    const posts = (await this.readClassified(batch)) ?? [];
+    const publicUrl = process.env.R2_PUBLIC_URL || '';
+    if (!publicUrl) return posts;
+
+    const mediaJson = await this.r2.getJson<MediaRecord[]>(
+      this.workspaceKey(batch, 'media.json'),
+    );
+    if (!mediaJson) return posts;
+
+    const byTs = new Map<number, { url: string; type: string }[]>();
+    for (const m of mediaJson) {
+      if (!m.uri) continue;
+      const arr = byTs.get(m.timestamp) ?? [];
+      arr.push({
+        url: `${publicUrl}/${this.stagingPrefix(batch)}${m.uri}`,
+        type: (m as MediaRecord & { type?: string }).type ?? 'photo',
+      });
+      byTs.set(m.timestamp, arr);
+    }
+    return posts.map((p) => ({ ...p, media: byTs.get(p.timestamp) ?? [] }));
   }
 
   private toFailureEvent(err: unknown): {
@@ -799,18 +835,23 @@ export class FbImportService {
   }
 
   /**
-   * Rewrites the admin's category corrections into classified.json — both the
-   * local copy the analyze stages read and the durable one in R2. Returns how
-   * many edits were applied.
+   * Applies the admin's review to classified.json — category corrections plus
+   * an explicit skip list that removes posts from the import entirely. Writes
+   * both the local copy the analyze stages read and the durable R2 one, once.
+   *
+   * Skip here is human-driven and visible in the review UI — unlike the AI
+   * auto-skip this pipeline deliberately removed. classify still never drops a
+   * post; only the admin can, having seen every one.
    */
-  private async applyCategoryEdits(
+  private async applyReviewDecisions(
     batch: string,
     edits: CategoryEdit[],
-  ): Promise<number> {
-    const posts = (await this.readClassified(batch)) ?? [];
+    skipped: number[],
+  ): Promise<{ edited: number; skipped: number; remaining: number }> {
+    let posts = (await this.readClassified(batch)) ?? [];
     const byTimestamp = new Map(posts.map((p) => [p.timestamp, p]));
 
-    let applied = 0;
+    let edited = 0;
     for (const edit of edits) {
       const post = byTimestamp.get(edit.timestamp);
       if (!post) {
@@ -827,20 +868,23 @@ export class FbImportService {
       }
       post.category = edit.category;
       post.sub_categories = edit.sub_categories ?? [];
-      applied++;
+      edited++;
     }
 
-    if (applied > 0) {
-      const serialized = JSON.stringify(posts, null, 2);
-      const local = this.localWorkspacePath(batch, {
-        file: 'classified.json',
-        dir: 'etl_local/02_classify/output',
-      });
-      fs.mkdirSync(path.dirname(local), { recursive: true });
-      fs.writeFileSync(local, serialized);
-      await this.r2.putJson(this.workspaceKey(batch, 'classified.json'), posts);
-    }
-    return applied;
+    const skipSet = new Set(skipped);
+    const before = posts.length;
+    posts = posts.filter((p) => !skipSet.has(p.timestamp));
+    const skippedCount = before - posts.length;
+
+    const local = this.localWorkspacePath(batch, {
+      file: 'classified.json',
+      dir: 'etl_local/02_classify/output',
+    });
+    fs.mkdirSync(path.dirname(local), { recursive: true });
+    fs.writeFileSync(local, JSON.stringify(posts, null, 2));
+    await this.r2.putJson(this.workspaceKey(batch, 'classified.json'), posts);
+
+    return { edited, skipped: skippedCount, remaining: posts.length };
   }
 
   private async *runStage(

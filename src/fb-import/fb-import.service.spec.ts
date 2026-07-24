@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { ConflictException } from '@nestjs/common';
 import { FbImportService } from './fb-import.service';
 import * as r2zip from './r2-zip';
-import { parseImportSummary } from './pipeline-events';
+import { parseImportSummary, ReviewPost } from './pipeline-events';
 import { execFileSync, spawn } from 'child_process';
 
 jest.mock('child_process', () => ({
@@ -268,7 +268,17 @@ describe('FbImportService', () => {
       const review = events.find((e) => e.type === 'ready-for-review');
       expect(review).toBeDefined();
       expect(review.batch).toBe('batch-1');
-      expect(review.posts).toEqual(CLASSIFIED);
+      // Same posts, now enriched with staged-media preview URLs.
+      expect(
+        review.posts.map(({ media, ...rest }: ReviewPost) => rest),
+      ).toEqual(CLASSIFIED);
+      expect(review.posts[0].media).toEqual([
+        {
+          url: `https://cdn.test/pending-imports/batch-1/media-staging/${MEDIA_URI}`,
+          type: 'photo',
+        },
+      ]);
+      expect(review.posts[1].media).toEqual([]);
 
       // The batch is resumable: durable state + workspace live in R2 now.
       expect(
@@ -404,6 +414,52 @@ describe('FbImportService', () => {
           .toString('utf8'),
       );
       expect(after).toEqual(JSON.parse(before));
+    });
+
+    it('drops skipped posts from classified.json before the stages run', async () => {
+      seedFinalize('batch-skip');
+
+      for await (const ev of service.runFinalizePipeline(
+        'batch-skip',
+        [],
+        [2], // skip the second post
+      )) {
+        void ev; // drain
+      }
+
+      const classified = await r2.getJson(
+        'pending-imports/batch-skip/workspace/classified.json',
+      );
+      expect(classified.map((p: { timestamp: number }) => p.timestamp)).toEqual(
+        [1],
+      );
+      expect(
+        await r2.getJson('pending-imports/batch-skip/state.json'),
+      ).toMatchObject({ phase: 'done', postCount: 1 });
+    });
+
+    it('fails cleanly when every post is skipped', async () => {
+      seedFinalize('batch-allskip');
+
+      const events: any[] = [];
+      for await (const ev of service.runFinalizePipeline(
+        'batch-allskip',
+        [],
+        [1, 2],
+      )) {
+        events.push(ev);
+      }
+
+      const done = events.find((e) => e.type === 'done');
+      expect(done.success).toBe(false);
+      expect(done.summary).toContain('略過');
+      // No stage should have run — nothing to import.
+      const scriptArgs = mockSpawn.mock.calls.map((c) => c[1]![0] as string);
+      expect(scriptArgs.some((p) => p.includes('06_import'))).toBe(false);
+      // Retryable: back to review, zip intact.
+      expect(
+        await r2.getJson('pending-imports/batch-allskip/state.json'),
+      ).toMatchObject({ phase: 'review' });
     });
 
     it('leaves a failed batch resumable at the review step', async () => {
