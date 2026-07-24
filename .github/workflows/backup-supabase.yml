@@ -1,0 +1,203 @@
+name: Backup Supabase
+
+# The Free plan has NO automated backups — Supabase's own docs tell free-tier
+# users to dump regularly and keep the copies off-site. This workflow is that.
+#
+# Two destinations on purpose, so no single vendor outage loses both:
+#   1. GitHub Actions artifact — independent of Supabase AND Cloudflare, 90 days.
+#   2. R2 under backups/supabase/ — long-term, pennies. Optional: the step is
+#      skipped when the R2_* secrets are absent, so this workflow is useful
+#      before those exist.
+#
+# Required secret:
+#   SUPABASE_DB_URL — the *Session Pooler* connection string, NOT the direct one.
+#     Supabase Dashboard → Project Settings → Database → Connection string →
+#     "Session pooler". It looks like:
+#       postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+#     Why the pooler: GitHub runners are IPv4-only and the direct endpoint
+#     (db.<ref>.supabase.co) resolves to IPv6 only, which fails with "Network is
+#     unreachable". The Transaction pooler on :6543 is NOT usable either —
+#     pg_dump needs session mode. Getting this wrong is the #1 failure here.
+#
+# Optional secrets (enable the R2 copy):
+#   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT / R2_BUCKET_NAME
+
+on:
+  schedule:
+    # 08:00 UTC = 04:00 Ottawa (EDT). Deliberately after the 07:00 UTC nightly
+    # test run so a slow test job cannot delay the backup.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    env:
+      # Floor for the sanity check. Well under the real count (622 at the time
+      # of writing) so normal churn never trips it, but high enough that an
+      # empty or truncated dump does.
+      MIN_FB_POSTS_ROWS: '100'
+
+    steps:
+      - name: Install PostgreSQL 17 client
+        # ubuntu-latest ships an older client, and pg_dump refuses to dump a
+        # server newer than itself. Pull 17 from PGDG so this keeps working
+        # across Supabase's Postgres upgrades.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          pg_dump --version
+
+      - name: Dump database
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set. See the header of this workflow for how to get it."
+            exit 1
+          fi
+          STAMP=$(date -u +%Y-%m-%d)
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+          mkdir -p backup
+
+          # --schema=public only: the managed auth/storage/realtime schemas are
+          # not fully dumpable by the project role, and attempting them makes the
+          # dump fail rather than degrade. Consequence to know at restore time:
+          # auth.users is NOT in here, so the admin login has to be recreated.
+          # All application data (fb_posts, participant_stats, page_views) lives
+          # in public and IS covered.
+          pg_dump "$SUPABASE_DB_URL" \
+            --schema=public \
+            --no-owner \
+            --no-privileges \
+            --clean \
+            --if-exists \
+            --quote-all-identifiers \
+            --file=backup/maramap-${STAMP}.sql
+
+          gzip -9 backup/maramap-${STAMP}.sql
+          ls -lh backup/
+
+      - name: Verify the dump is actually restorable
+        # A backup job that "passes" while writing a 0-byte file is worse than
+        # no backup, because it buys false confidence. Fail loudly instead.
+        run: |
+          FILE="backup/maramap-${STAMP}.sql.gz"
+
+          test -s "$FILE" || { echo "::error::Dump file is empty or missing."; exit 1; }
+
+          gzip -t "$FILE" || { echo "::error::Dump failed gzip integrity check."; exit 1; }
+
+          SIZE=$(stat -c%s "$FILE")
+          echo "Compressed size: $SIZE bytes"
+          if [ "$SIZE" -lt 10240 ]; then
+            echo "::error::Dump is only ${SIZE} bytes — implausibly small, treating as failed."
+            exit 1
+          fi
+
+          # Structure: the tables we care about must be present.
+          for table in fb_posts participant_stats page_views; do
+            if ! gzip -dc "$FILE" | grep -q "CREATE TABLE \"public\".\"${table}\""; then
+              echo "::error::Dump is missing CREATE TABLE for ${table}."
+              exit 1
+            fi
+          done
+
+          # Content: count the data rows in the fb_posts COPY block. Catches the
+          # case where the schema dumped fine but the data did not come through.
+          ROWS=$(gzip -dc "$FILE" \
+            | awk '/^COPY "public"."fb_posts"/{flag=1;next} /^\\\.$/{flag=0} flag' \
+            | wc -l)
+          echo "fb_posts rows in dump: $ROWS"
+          if [ "$ROWS" -lt "$MIN_FB_POSTS_ROWS" ]; then
+            echo "::error::Only ${ROWS} fb_posts rows in the dump (floor is ${MIN_FB_POSTS_ROWS}). Refusing to call this a good backup."
+            exit 1
+          fi
+
+          echo "SUMMARY=${ROWS} fb_posts rows, $(numfmt --to=iec "$SIZE")" >> "$GITHUB_ENV"
+          echo "✅ Dump verified."
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ env.STAMP }}
+          path: backup/
+          retention-days: 90
+
+      - name: Copy to R2
+        # Skipped rather than failed when R2 is not configured yet — the artifact
+        # above is already a real backup on its own.
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$R2_ENDPOINT" ] || [ -z "$R2_BUCKET_NAME" ]; then
+            echo "R2 secrets not set — skipping the R2 copy. The artifact is still stored."
+            exit 0
+          fi
+          # backups/ is untouched by the tmp/ lifecycle rule in
+          # utils/set-r2-lifecycle.js, so nothing here gets auto-expired.
+          aws s3 cp "backup/maramap-${STAMP}.sql.gz" \
+            "s3://${R2_BUCKET_NAME}/backups/supabase/maramap-${STAMP}.sql.gz" \
+            --endpoint-url "$R2_ENDPOINT"
+          echo "✅ Copied to R2 at backups/supabase/maramap-${STAMP}.sql.gz"
+
+      - name: Report failure as an issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'backup-failure',
+              state: 'open',
+            });
+
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `### Supabase backup failed again — ${today}\n\n[View run](${runUrl})`,
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🔴 Supabase backup failed — ${today}`,
+              body: [
+                `## Supabase backup failure — ${today}`,
+                '',
+                'The Free plan has no automated backups, so a failed run here means',
+                '**there is no fresh copy of the database today**. Worth fixing promptly.',
+                '',
+                `[View run](${runUrl})`,
+                '',
+                '### Usual suspects',
+                '- `SUPABASE_DB_URL` must be the **Session pooler** string (port 5432 on',
+                '  `*.pooler.supabase.com`). The direct `db.<ref>.supabase.co` host is',
+                '  IPv6-only and unreachable from GitHub runners.',
+                '- Database password rotated → update the secret.',
+                '- Project paused for inactivity → check the keep-alive workflow.',
+              ].join('\n'),
+              labels: ['backup-failure'],
+            });
