@@ -8,9 +8,14 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { FbPostsService } from './fb-posts.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { R2Service } from '../storage/r2.service';
+import { StatsService } from '../stats/stats.service';
 
 describe('FbPostsService', () => {
   let service: FbPostsService;
+
+  const mockStatsService = {
+    refreshAfterMutation: jest.fn().mockResolvedValue(undefined),
+  };
 
   const mockR2Service = {
     delete: jest.fn().mockResolvedValue(undefined),
@@ -65,10 +70,12 @@ describe('FbPostsService', () => {
           useValue: { get: jest.fn(), set: jest.fn(), del: jest.fn() },
         },
         { provide: R2Service, useValue: mockR2Service },
+        { provide: StatsService, useValue: mockStatsService },
       ],
     }).compile();
 
     service = module.get<FbPostsService>(FbPostsService);
+    mockStatsService.refreshAfterMutation.mockClear();
     mockR2Service.delete.mockClear();
     mockR2Service.delete.mockResolvedValue(undefined);
     mockR2Service.upload.mockClear();
@@ -428,6 +435,61 @@ describe('FbPostsService', () => {
       );
 
       await expect(service.remove('user-123', 'post-1')).resolves.toBeDefined();
+    });
+  });
+
+  // Participant stats are derived from fb_posts, so every write has to kick a
+  // recompute — this replaced a nightly cron, and a missed hook now means the
+  // numbers stay wrong until someone notices rather than until midnight.
+  describe('participant stats refresh', () => {
+    it('refreshes after create', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: 'post-1', media: [] }, error: null }),
+      );
+
+      await service.create('user-123', {
+        title: 'New race',
+        event_date: '2026-07-23',
+        category: '馬拉松',
+      } as any);
+
+      expect(mockStatsService.refreshAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes after update', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: 'post-1', media: [] }, error: null }),
+      );
+
+      await service.update('user-123', 'post-1', { title: 'Edited' } as any);
+
+      expect(mockStatsService.refreshAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes after remove', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: { id: 'post-1' }, error: null }),
+      );
+
+      await service.remove('user-123', 'post-1');
+
+      expect(mockStatsService.refreshAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not refresh when the write itself failed', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: null, error: { message: 'insert failed' } }),
+      );
+
+      await expect(
+        service.create('user-123', {
+          title: 'Doomed',
+          event_date: '2026-07-23',
+          category: '馬拉松',
+        } as any),
+      ).rejects.toThrow();
+
+      expect(mockStatsService.refreshAfterMutation).not.toHaveBeenCalled();
     });
   });
 

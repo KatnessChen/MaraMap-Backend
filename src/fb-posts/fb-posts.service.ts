@@ -14,6 +14,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateFbPostDto } from './update-fb-post.dto';
 import { CreateFbPostDto } from './create-fb-post.dto';
 import { R2Service } from '../storage/r2.service';
+import { StatsService } from '../stats/stats.service';
 
 // Permanent media live under the same R2 prefix the Facebook ETL uploads to
 // (see utils/upload-to-r2.js), so manually-added and imported media share one
@@ -30,6 +31,7 @@ export class FbPostsService {
     private readonly supabase: SupabaseService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly r2: R2Service,
+    private readonly stats: StatsService,
   ) {}
 
   /**
@@ -668,6 +670,7 @@ export class FbPostsService {
       .single();
     if (error) throw new InternalServerErrorException(error.message);
     await this.cacheManager.del(`pb:${userId}`);
+    await this.stats.refreshAfterMutation(`post create ${data.id}`);
     return this.normalizePost(data, publicUrl);
   }
 
@@ -841,6 +844,10 @@ export class FbPostsService {
       .single();
     if (error) throw new InternalServerErrorException(error.message);
     await this.cacheManager.del(`pb:${userId}`);
+    // Edits reach the stats through several fields, not just metadata:
+    // category, is_hidden and metadata.participants all change the totals.
+    // Refreshing unconditionally is simpler than diffing which one moved.
+    await this.stats.refreshAfterMutation(`post update ${id}`);
     return this.normalizePost(data, publicUrl);
   }
 
@@ -1021,6 +1028,7 @@ export class FbPostsService {
       }
     }
 
+    await this.stats.refreshAfterMutation(`post delete ${id}`);
     return data;
   }
 }

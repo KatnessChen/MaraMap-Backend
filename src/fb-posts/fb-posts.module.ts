@@ -5,9 +5,10 @@ import { SupabaseModule } from '../supabase/supabase.module';
 import { AuthModule } from '../auth/auth.module';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { StorageModule } from '../storage/storage.module';
+import { StatsModule } from '../stats/stats.module';
 
 @Module({
-  imports: [SupabaseModule, AuthModule, StorageModule],
+  imports: [SupabaseModule, AuthModule, StorageModule, StatsModule],
   controllers: [FbPostsController],
   providers: [FbPostsService, AdminGuard],
   exports: [FbPostsService],
