@@ -165,9 +165,15 @@ try {
   // timestamp never collides: media is FK'd by timestamp, and the DB unique key is
   // (user_id, fb_timestamp), so a collision would cross-link media or drop a post.
   const usedTimestamps = new Set(postsResult.map((p) => p.timestamp));
+  // Media already claimed by a post we're keeping. Built from mediaResult (not
+  // from every post in the export) on purpose: posts filtered out above never
+  // reach the database, so a photo that only appears on one of those is NOT
+  // covered and its album must still be imported.
+  const claimedUris = new Set(mediaResult.map((m) => m.uri));
   const albumFiles = findAlbumJsons(RAW_BATCH_DIR);
   const albumTimestamps = [];
   let albumCount = 0;
+  let mirrorCount = 0;
 
   albumFiles.forEach((albumPath) => {
     const album = JSON.parse(fs.readFileSync(albumPath, 'utf8'));
@@ -176,16 +182,32 @@ try {
     const text = fixEncoding(album.description || '');
     const title = fixEncoding(album.name || '');
 
+    // Facebook's rolling system albums ("行動上傳", "相片", …) re-list photos
+    // that are already attached to ordinary feed posts, so importing them
+    // would duplicate every photo and invent an extra empty post. Detect them
+    // by what they contain rather than by name: an album that adds no photo we
+    // aren't already importing is a mirror, whatever it's called. A real event
+    // album is not in the main feed file at all, so nothing of it is claimed.
+    const photoUris = photos.map((p) => p.uri).filter(Boolean);
+    if (photoUris.length > 0 && photoUris.every((uri) => claimedUris.has(uri))) {
+      console.log(
+        `   ⏭️  Skipped mirror album "${title}" — all ${photoUris.length} photo(s) already on imported posts`,
+      );
+      mirrorCount += 1;
+      return;
+    }
+
     // Album JSON has no post timestamp. Prefer the ROC date in the album name
-    // (accurate event date); else approximate with the cover photo's creation
-    // time, the earliest photo, or the last edit time.
+    // (the true event date); else the earliest photo, which tracks when the
+    // album's content actually happened. The cover photo comes after that: it
+    // can be set — or left untouched — years away from the rest of the album.
     const photoTimestamps = photos
       .map((p) => p.creation_timestamp)
       .filter(Boolean);
     let timestamp =
       parseRocDateToTimestamp(title) ||
-      (album.cover_photo && album.cover_photo.creation_timestamp) ||
       (photoTimestamps.length ? Math.min(...photoTimestamps) : null) ||
+      (album.cover_photo && album.cover_photo.creation_timestamp) ||
       album.last_modified_timestamp;
 
     if (!timestamp) return;          // nothing to anchor the post to
@@ -212,6 +234,11 @@ try {
 
   if (albumCount > 0) {
     console.log(`   📸 Included ${albumCount} album post(s) from posts/album/`);
+  }
+  if (mirrorCount > 0) {
+    console.log(
+      `   🪞 Skipped ${mirrorCount} mirror album(s) — no photos lost, they belong to feed posts`,
+    );
   }
   fs.writeFileSync(ALBUM_TS_OUTPUT, JSON.stringify(albumTimestamps, null, 2));
 

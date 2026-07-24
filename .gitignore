@@ -27,17 +27,17 @@ Thumbs.db
 docs/temp
 
 # ETL — raw inputs, generated outputs, and secrets
-etl/01_ingest/raw/
-etl/01_ingest/output/
-etl/02_classify/output/
-etl/03_analyze/00_base/output/
-etl/03_analyze/01_marathon/output/
-etl/03_analyze/02_hiking/output/
-etl/03_analyze/output/
-etl/04_format/output/
-etl/05_merge/output/
-etl/06_import/output/
-etl/.env
+etl_local/01_ingest/raw/
+etl_local/01_ingest/output/
+etl_local/02_classify/output/
+etl_local/03_analyze/00_base/output/
+etl_local/03_analyze/01_marathon/output/
+etl_local/03_analyze/02_hiking/output/
+etl_local/03_analyze/output/
+etl_local/04_format/output/
+etl_local/05_merge/output/
+etl_local/06_import/output/
+etl_local/.env
 
 # Legacy (pre-reorganization)
 server_log.txt

@@ -98,14 +98,29 @@ async function assignTrips() {
     return;
   }
 
-  // 批次寫入
+  // 只寫入「算出來跟資料庫不一樣」的貼文。分組本身必須看全部貼文（新的旅遊文
+  // 可能屬於幾個月前就匯入的馬拉松那趟行程），但寫入沒有理由涵蓋全部 —— 匯入一
+  // 批新資料時，絕大多數舊貼文的 trip_id 根本沒變，重寫一次只是白白產生數百次
+  // 資料庫寫入。用差異判斷而不是限定 batch，是因為新的馬拉松貼文「應該」要能把
+  // 既有的鄰近旅遊貼文收進同一趟行程 —— 那是正確的異動，限定 batch 反而會漏掉。
+  const currentTripId = new Map(posts.map((p) => [p.id, p.trip_id]));
+  const changes = [...assignments.entries()].filter(
+    ([postId, tripId]) => currentTripId.get(postId) !== tripId,
+  );
+
+  console.log(`\n🔍 需要異動: ${changes.length} 筆（其餘 ${assignments.size - changes.length} 筆 trip_id 未變，略過）`);
+
+  if (changes.length === 0) {
+    console.log('✅ 完成 — 沒有需要異動的貼文');
+    return;
+  }
+
   let updated = 0;
   let errors  = 0;
   const CHUNK = 50;
-  const entries = [...assignments.entries()];
 
-  for (let i = 0; i < entries.length; i += CHUNK) {
-    const chunk = entries.slice(i, i + CHUNK);
+  for (let i = 0; i < changes.length; i += CHUNK) {
+    const chunk = changes.slice(i, i + CHUNK);
     for (const [postId, tripId] of chunk) {
       const { error: err } = await supabase
         .from('fb_posts')
@@ -115,7 +130,7 @@ async function assignTrips() {
       if (err) { console.error(`  ❌ ${postId}: ${err.message}`); errors++; }
       else updated++;
     }
-    console.log(`  批次 ${Math.floor(i / CHUNK) + 1}: 已處理 ${Math.min(i + CHUNK, entries.length)} / ${entries.length}`);
+    console.log(`  批次 ${Math.floor(i / CHUNK) + 1}: 已處理 ${Math.min(i + CHUNK, changes.length)} / ${changes.length}`);
   }
 
   console.log(`\n✅ 完成 — 寫入 ${updated} 筆，失敗 ${errors} 筆`);

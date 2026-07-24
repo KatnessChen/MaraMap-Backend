@@ -3,6 +3,9 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
+  Get,
+  NotFoundException,
   Param,
   Post,
   Res,
@@ -24,9 +27,36 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { FbImportService } from './fb-import.service';
-import { RescuedPost } from './pipeline-events';
+import { CategoryEdit } from './pipeline-events';
 
 const BATCH_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Prepares an NDJSON stream that outlives its reader.
+ *
+ * The admin is expected to close the tab mid-import and come back later, so a
+ * disconnect must not disturb the pipeline: the returned writer drops events
+ * once the socket is gone (writing to a destroyed response emits an unhandled
+ * 'error' that would take down the dev server) while the generator keeps
+ * running to completion, leaving the batch resumable on disk.
+ */
+function openEventStream(res: Response): (event: unknown) => void {
+  res.setTimeout(0); // Gemini calls, R2 uploads and rate-limited geocoding take many minutes
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Transfer-Encoding', 'chunked');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.flushHeaders();
+  res.on('error', () => {});
+
+  return (event: unknown) => {
+    if (res.writableEnded || res.destroyed) return;
+    res.write(JSON.stringify(event) + '\n');
+  };
+}
+
+function closeEventStream(res: Response): void {
+  if (!res.writableEnded && !res.destroyed) res.end();
+}
 
 const fbImportMulterOptions = {
   storage: diskStorage({
@@ -80,20 +110,11 @@ export class FbImportController {
     if (!file) throw new BadRequestException('缺少上傳檔案（file）。');
     if (!this.fbImportService.isEtlAvailable()) {
       throw new ConflictException(
-        '此功能僅限本機開發環境使用（etl/ 未包含在部署的容器中）。請以 npm run start:dev 在本機執行後台再試一次。',
+        '此功能僅限本機開發環境使用（etl_local/ 未包含在部署的容器中）。請以 npm run start:dev 在本機執行後台再試一次。',
       );
     }
 
-    // Gemini calls, fixed sleeps, R2 uploads, and rate-limited geocoding can
-    // together take many minutes — never let the platform's default response
-    // timeout cut the stream short.
-    res.setTimeout(0);
-
-    res.setHeader('Content-Type', 'application/x-ndjson');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.flushHeaders();
-
+    const emit = openEventStream(res);
     const batch = this.fbImportService.generateBatchName();
 
     try {
@@ -101,30 +122,65 @@ export class FbImportController {
         batch,
         file.path,
       )) {
-        res.write(JSON.stringify(event) + '\n');
+        emit(event);
       }
     } catch (err) {
-      res.write(
-        JSON.stringify({
-          type: 'done',
-          success: false,
-          summary: `Fatal: ${(err as Error).message}`,
-        }) + '\n',
-      );
+      emit({
+        type: 'done',
+        success: false,
+        summary: `Fatal: ${(err as Error).message}`,
+      });
     } finally {
-      res.end();
+      closeEventStream(res);
     }
+  }
+
+  @Get('pending')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({
+    summary: '列出已解析但尚未完成匯入的 batch（供關閉頁面後接續）',
+  })
+  listPending() {
+    return { batches: this.fbImportService.listResumableBatches() };
+  }
+
+  @Get(':batch/review')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '取回指定 batch 的分類結果以繼續審核' })
+  getReview(@Param('batch') batch: string) {
+    if (!BATCH_NAME_PATTERN.test(batch)) {
+      throw new BadRequestException('無效的 batch 名稱。');
+    }
+    const review = this.fbImportService.readReview(batch);
+    if (!review) throw new NotFoundException('找不到這個匯入批次。');
+    return review;
+  }
+
+  @Delete(':batch')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({
+    summary:
+      '取消未完成的匯入，將該批次的本機檔案移至垃圾桶（不影響已寫入資料庫的文章）',
+  })
+  cancelBatch(@Param('batch') batch: string) {
+    if (!BATCH_NAME_PATTERN.test(batch)) {
+      throw new BadRequestException('無效的 batch 名稱。');
+    }
+    if (!this.fbImportService.isEtlAvailable()) {
+      throw new ConflictException('此功能僅限本機開發環境使用。');
+    }
+    return this.fbImportService.cancelBatch(batch);
   }
 
   @Post(':batch/confirm')
   @ApiBearerAuth('admin-token')
   @ApiOperation({
     summary:
-      '確認要救回的 skip 貼文並完成匯入（06_import → R2 上傳 → 07_trips → 08_geocode）',
+      '確認分類後完成匯入（03_analyze → 04_format → 05_merge → 06_import → R2 上傳 → 07_trips → 08_geocode）',
   })
   async confirmFbImport(
     @Param('batch') batch: string,
-    @Body('rescued') rescued: RescuedPost[] | undefined,
+    @Body('edits') edits: CategoryEdit[] | undefined,
     @Res() res: Response,
   ) {
     if (!BATCH_NAME_PATTERN.test(batch)) {
@@ -132,33 +188,27 @@ export class FbImportController {
     }
     if (!this.fbImportService.isEtlAvailable()) {
       throw new ConflictException(
-        '此功能僅限本機開發環境使用（etl/ 未包含在部署的容器中）。請以 npm run start:dev 在本機執行後台再試一次。',
+        '此功能僅限本機開發環境使用（etl_local/ 未包含在部署的容器中）。請以 npm run start:dev 在本機執行後台再試一次。',
       );
     }
 
-    res.setTimeout(0);
-    res.setHeader('Content-Type', 'application/x-ndjson');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.flushHeaders();
+    const emit = openEventStream(res);
 
     try {
       for await (const event of this.fbImportService.runFinalizePipeline(
         batch,
-        Array.isArray(rescued) ? rescued : [],
+        Array.isArray(edits) ? edits : [],
       )) {
-        res.write(JSON.stringify(event) + '\n');
+        emit(event);
       }
     } catch (err) {
-      res.write(
-        JSON.stringify({
-          type: 'done',
-          success: false,
-          summary: `Fatal: ${(err as Error).message}`,
-        }) + '\n',
-      );
+      emit({
+        type: 'done',
+        success: false,
+        summary: `Fatal: ${(err as Error).message}`,
+      });
     } finally {
-      res.end();
+      closeEventStream(res);
     }
   }
 }

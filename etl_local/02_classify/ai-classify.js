@@ -10,8 +10,13 @@ if (!BATCH) {
 }
 const INPUT_FILE = path.join(__dirname, `../01_ingest/output/${BATCH}/posts.json`);
 const OUTPUT_FILE = path.join(__dirname, `./output/${BATCH}/classified.json`);
-const SKIPPED_OUTPUT = path.join(__dirname, `./output/${BATCH}/skipped.json`);
 fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
+
+// Every post must come out with one of these — nothing is ever dropped. The
+// admin reviews and corrects the result before the analyze stages run, so an
+// imperfect guess costs a click, whereas a dropped post is invisible.
+const CATEGORIES = ['馬拉松', '登山', '旅遊'];
+const DEFAULT_CATEGORY = '旅遊';
 const API_KEY = process.env.GEMINI_API_KEY;
 
 if (!API_KEY) {
@@ -34,35 +39,34 @@ function buildPrompt(batch, batchOffset) {
   return `
     你是一位馬拉松、登山與旅遊專家。請根據以下貼文列表判讀每篇的主題分類。
     回傳 JSON 數組（長度必須等於輸入數量）：
-    [{ "category": "馬拉松|旅遊|登山|skip", "sub_categories": [] }]
+    [{ "category": "馬拉松|登山|旅遊", "sub_categories": [] }]
 
-    === CATEGORY 定義 ===
+    === CATEGORY 定義（只有這三種，沒有第四種）===
 
     1. 馬拉松：作者本人親身完成正式賽事，且文中有至少 3 個句子詳細描述賽事過程（賽道、補給、配速、心情、天氣等）。
 
-    2. 旅遊：出國或國內旅遊行程紀錄，含練習跑、自主訓練、非正式比賽。
+    2. 登山：作者本人完成登頂，文中有明確的已完成登頂紀錄。
+
+    3. 旅遊：其餘全部。這是預設值 —— 只要不明確屬於「馬拉松」或「登山」，一律回傳「旅遊」。
 
     【馬拉松 vs 旅遊 決策流程】（按順序判斷，第一個符合的就採用）：
     STEP 1: 文章是否為多天行程日記（有 D1, D2, D3... 或「第一天」「第二天」格式）？
       → 是：計算賽事描述的行數。若賽事只有 1~3 行（只提時間/成績），其餘都是景點 → 旅遊
       → 是：若賽事描述有 5 行以上詳細過程（賽道、補給等）→ 馬拉松
     STEP 2: 文章不是多天日記，而是以賽事為主的單篇記錄，且有詳細完賽過程描述 → 馬拉松
-    STEP 3: 其餘含有旅遊內容的 → 旅遊
+    STEP 3: 其餘 → 旅遊
 
-    3. 登山：作者本人完成登頂，文中有明確的已完成登頂紀錄。
-
-    4. skip：不屬於以上任何類別（見下方規則）。
-
-    === 一定要 skip 的情況（即使內容提到馬拉松/登山/旅遊）===
+    === 以下情況一律歸為「旅遊」（即使內容提到馬拉松/登山）===
     - 生日祝賀、生日感謝文
     - 年度回顧/總結/感想/全年摘要（含回顧+展望混合文）
     - 年度計畫、新年新希望、心願清單、夢想清單
-    - 整篇主旨為未來計畫（整篇都是未來式才 skip，文末附帶提下一場不算）
+    - 整篇主旨為未來計畫
     - 里程碑感言/豐功偉業回顧（以累積成就統計為主旨，無具體新賽事紀錄）
     - 對過去賽事的純感想/心得/評論（無本次具體完賽成績）
-    - 事後補記類：這場賽事已在其他貼文記錄過，這篇只是補充購買照片、購買紀念品、收到獎牌/成績單。判斷特徵：「向XX公司購買XX馬拉松的照片」「買了XX的照片留念」「收到成績單」→ 一律 skip
+    - 事後補記類：這場賽事已在其他貼文記錄過，這篇只是補充購買照片、購買紀念品、收到獎牌/成績單
     - 吃飯、開會、生活瑣事、節日問候
     - 轉發他人貼文、分享外部連結、賽事資訊列表
+    - 文字太少或標題模糊無法判讀
 
     === sub_categories 規則 ===
 
@@ -85,7 +89,7 @@ function buildPrompt(batch, batchOffset) {
     其他 category 回傳 []
 
     === 其他規則 ===
-    - 文字太少或標題模糊無法判讀 → skip
+    - 不得回傳「skip」或空白分類 —— 無法判斷時就回傳「旅遊」
     - 只回傳 JSON，不要任何解釋
     - 必須回傳與傳入數量相同的 JSON 元素
 
@@ -151,10 +155,22 @@ async function classifyPosts() {
     console.log(`📊 Processing ${postsToProcess.length} posts...`);
 
     const newResults = [];
-    const skipQueue = []; // posts that were classified as skip — pending review
+    let defaultedCount = 0;
     const BATCH_SIZE = 5;
 
-    // --- Pass 1: classify ---
+    // Nothing is ever dropped: whenever the AI can't give us a usable answer
+    // (API error, short response, unknown category) the post still lands in
+    // classified.json as 旅遊 for the admin to correct in the review step.
+    const record = (post, category, subCategories) =>
+      newResults.push({
+        timestamp: post.timestamp,
+        date: post.date,
+        text: post.text,
+        title: post.title,
+        category,
+        sub_categories: subCategories || [],
+      });
+
     for (let i = 0; i < postsToProcess.length; i += BATCH_SIZE) {
       const batch = postsToProcess.slice(i, i + BATCH_SIZE);
       console.log(
@@ -178,6 +194,11 @@ async function classifyPosts() {
           `❌ Batch ${Math.floor(i / BATCH_SIZE) + 1} error:`,
           err.message,
         );
+        console.warn(
+          `   → ${batch.length} post(s) default to ${DEFAULT_CATEGORY}, pending review`,
+        );
+        batch.forEach((post) => record(post, DEFAULT_CATEGORY, []));
+        defaultedCount += batch.length;
         continue;
       }
 
@@ -189,65 +210,17 @@ async function classifyPosts() {
 
       batch.forEach((post, idx) => {
         const cls = classifications[idx];
-        if (!cls) {
+        const category = cls && cls.category;
+        if (!CATEGORIES.includes(category)) {
           console.warn(
-            `⚠️  No classification for ${post.timestamp} — queuing for review`,
+            `⚠️  ${post.timestamp}: unusable category ${JSON.stringify(category)} → ${DEFAULT_CATEGORY}`,
           );
-          skipQueue.push(post);
+          record(post, DEFAULT_CATEGORY, []);
+          defaultedCount += 1;
           return;
         }
-        if (cls.category === 'skip') {
-          skipQueue.push(post);
-          return;
-        }
-        newResults.push({
-          timestamp: post.timestamp,
-          date: post.date,
-          text: post.text,
-          title: post.title,
-          category: cls.category,
-          sub_categories: cls.sub_categories || [],
-        });
+        record(post, category, cls.sub_categories);
       });
-    }
-
-    // --- Pass 2: review skip queue one by one ---
-    if (skipQueue.length > 0) {
-      console.log(`\n🔍 Reviewing ${skipQueue.length} skipped posts...`);
-      for (let i = 0; i < skipQueue.length; i++) {
-        const post = skipQueue[i];
-        console.log(
-          `  [${i + 1}/${skipQueue.length}] Reviewing ${post.timestamp}...`,
-        );
-
-        await new Promise((r) => setTimeout(r, 3000));
-
-        try {
-          const responseText = await callAI(buildPrompt([post], 0));
-          const match = responseText.match(/\[[\s\S]*\]/);
-          if (!match) throw new Error('Invalid review response');
-          const review = JSON.parse(match[0].trim())[0];
-
-          if (review && review.category !== 'skip') {
-            console.log(`  ✅ Rescued: ${post.timestamp} → ${review.category}`);
-            newResults.push({
-              timestamp: post.timestamp,
-              date: post.date,
-              text: post.text,
-              title: post.title,
-              category: review.category,
-              sub_categories: review.sub_categories || [],
-            });
-          } else {
-            console.log(`  ⏭️  Confirmed skip: ${post.timestamp}`);
-          }
-        } catch (err) {
-          console.error(
-            `  ❌ Review error for ${post.timestamp}:`,
-            err.message,
-          );
-        }
-      }
     }
 
     // --- Merge with existing classified.json (partial run) ---
@@ -270,26 +243,31 @@ async function classifyPosts() {
       );
     }
 
+    // Guard the no-drop contract rather than trusting the branches above: the
+    // review UI can only correct posts that made it into classified.json, so a
+    // silent loss here would be invisible to the admin.
+    const classifiedTimestamps = new Set(newResults.map((r) => r.timestamp));
+    const dropped = postsToProcess.filter(
+      (p) => !classifiedTimestamps.has(p.timestamp),
+    );
+    if (dropped.length > 0) {
+      throw new Error(
+        `${dropped.length} post(s) were dropped during classification: ${dropped
+          .map((p) => p.timestamp)
+          .join(', ')}`,
+      );
+    }
+
     fs.writeFileSync(OUTPUT_FILE, JSON.stringify(finalResults, null, 2));
     console.log(
       `\n✅ Classification complete — ${finalResults.length} posts saved to ${OUTPUT_FILE}`,
     );
     console.log(
-      `📊 This run: ${newResults.length} classified, ${skipQueue.length} reviewed (${skipQueue.length - (newResults.length - (isPartialRun ? 0 : 0))} confirmed skip)`,
+      `📊 This run: ${newResults.length} classified (${defaultedCount} defaulted to ${DEFAULT_CATEGORY}), 0 skipped`,
     );
-
-    // Set difference against postsToProcess catches every drop path (batch
-    // API errors, first-pass skip, second-pass confirmed skip, review
-    // errors) without needing to track each branch separately. Lets the
-    // admin-import review step offer these posts for manual rescue.
-    const classifiedTimestamps = new Set(finalResults.map((r) => r.timestamp));
-    const stillSkipped = postsToProcess
-      .filter((p) => !classifiedTimestamps.has(p.timestamp))
-      .map((p) => ({ timestamp: p.timestamp, date: p.date, title: p.title, text: p.text }));
-    fs.writeFileSync(SKIPPED_OUTPUT, JSON.stringify(stillSkipped, null, 2));
-    console.log(`⏭️  ${stillSkipped.length} post(s) skipped — saved to ${SKIPPED_OUTPUT}`);
   } catch (error) {
     console.error('❌ AI Processing Error:', error.message);
+    process.exit(1);
   }
 }
 

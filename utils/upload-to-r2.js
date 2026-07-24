@@ -24,8 +24,8 @@ const BATCH = process.env.BATCH;
 // Raw exports now live under etl/01_ingest/raw/<batch>/<extracted-folder>/..., one
 // subtree per Facebook data batch, instead of a single flat fb/raw/ folder.
 const RAW_ROOT = BATCH
-  ? path.join(__dirname, '../etl/01_ingest/raw/', BATCH)
-  : path.join(__dirname, '../etl/01_ingest/raw/');
+  ? path.join(__dirname, '../etl_local/01_ingest/raw/', BATCH)
+  : path.join(__dirname, '../etl_local/01_ingest/raw/');
 
 const s3 = new S3Client(r2Config);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -118,7 +118,7 @@ async function startMigration() {
   let query = supabase.from('fb_posts').select('fb_timestamp, media').eq('user_id', USER_ID);
 
   if (BATCH) {
-    const postsJsonPath = path.join(__dirname, '../etl/01_ingest/output', BATCH, 'posts.json');
+    const postsJsonPath = path.join(__dirname, '../etl_local/01_ingest/output', BATCH, 'posts.json');
     if (!fs.existsSync(postsJsonPath)) {
       console.error(`❌ No ingest output found for batch "${BATCH}": ${postsJsonPath}`);
       process.exit(1);

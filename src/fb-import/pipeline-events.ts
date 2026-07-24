@@ -1,14 +1,33 @@
-export interface SkippedPost {
+/** A post as shown in the review step, carrying the AI's guess for editing. */
+export interface ReviewPost {
   timestamp: number;
   date: string;
   title: string | null;
   text: string | null;
+  category: string;
+  sub_categories: string[];
 }
 
-export interface RescuedPost {
+/** An admin's correction to one post's classification. */
+export interface CategoryEdit {
   timestamp: number;
   category: string;
   sub_categories?: string[];
+}
+
+export type ImportPhase = 'review' | 'finalizing' | 'done' | 'failed';
+
+/**
+ * Per-batch progress marker on disk. Its only job is to let the admin close
+ * the browser mid-import and pick the batch back up later — every other piece
+ * of state already lives in the stage output files.
+ */
+export interface ImportState {
+  batch: string;
+  phase: ImportPhase;
+  postCount: number;
+  updatedAt: string;
+  summary?: string;
 }
 
 export type PipelineEvent =
@@ -16,7 +35,7 @@ export type PipelineEvent =
   | { type: 'log'; stage: string; stream: 'stdout' | 'stderr'; line: string }
   | { type: 'stage-end'; stage: string; exitCode: number }
   | { type: 'error'; stage: string; message: string }
-  | { type: 'ready-for-review'; batch: string; skipped: SkippedPost[] }
+  | { type: 'ready-for-review'; batch: string; posts: ReviewPost[] }
   | { type: 'done'; success: boolean; summary: string };
 
 export class StageFailedError extends Error {
