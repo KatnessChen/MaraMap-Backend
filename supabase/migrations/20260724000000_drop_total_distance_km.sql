@@ -1,0 +1,14 @@
+-- Drop participant_stats.total_distance_km — the cumulative mileage aggregate.
+--
+-- Why it goes rather than gets fixed:
+--   - No consumer. Nothing in MaraMap-Frontend reads it; the only writer was
+--     StatsService.refreshAllStats(). (The per-post metadata.participants[].
+--     stats.distance_km that drives pace on the log page is unrelated and stays.)
+--   - The value was wrong anyway. Unlike the FM/HM/UM counters, the accumulator
+--     had no `category === '馬拉松'` guard, so any post carrying a distance_km —
+--     hiking and travel included — was summed into a figure labelled as running
+--     mileage (5378.19 km for Davis at the time of removal).
+--
+-- The column is nullable, so the code that stopped writing it deploys fine with
+-- or without this migration; running it just removes the stale leftover.
+ALTER TABLE participant_stats DROP COLUMN IF EXISTS total_distance_km;
