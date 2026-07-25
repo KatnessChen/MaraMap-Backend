@@ -731,8 +731,8 @@ export class FbPostsService {
 
     // Uploads land in a tmp prefix and are "claimed" into the permanent path
     // when a post is actually created (see claimTmpMedia). Anything never
-    // claimed (abandoned drafts) is swept by the R2 lifecycle rule on
-    // `tmp/` — see utils/set-r2-lifecycle.js.
+    // claimed (abandoned drafts) is swept by the R2 Object Lifecycle rule on
+    // `tmp/` (configured in the Cloudflare dashboard — see README).
     const key = `tmp/${userId}/${Date.now()}-${randomUUID()}.${ext}`;
     const url = await this.r2.upload(key, file.buffer, file.mimetype);
     return { key, url, type };
