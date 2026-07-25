@@ -591,6 +591,23 @@ describe('parseImportSummary', () => {
     expect(summary).toContain('沒有新文章');
   });
 
+  it('reports both new and already-existing counts', () => {
+    const summary = parseImportSummary([
+      '⏭️  Skipping 4 post(s) already in the database.',
+      '✅ Inserted 3 new record(s).',
+    ]);
+    expect(summary).toContain('新增 3 篇');
+    expect(summary).toContain('4 篇已存在資料庫');
+  });
+
+  it('says how many already existed when nothing was new', () => {
+    const summary = parseImportSummary([
+      '⏭️  Skipping 7 post(s) already in the database.',
+      '✅ Nothing new to import — all posts already exist.',
+    ]);
+    expect(summary).toContain('7 篇皆已存在資料庫');
+  });
+
   it('falls back to a generic message when no summary line is found', () => {
     const summary = parseImportSummary(['unrelated log line']);
     expect(summary).toContain('找不到');

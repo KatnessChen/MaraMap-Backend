@@ -55,15 +55,34 @@ export class StageFailedError extends Error {
 /**
  * Derives a user-facing summary from 06_import's captured stdout lines.
  * That stage is the only one whose completion count matters to the admin —
- * every other stage is an intermediate step.
+ * every other stage is an intermediate step. Surfaces both the number of new
+ * posts inserted and the number already in the DB (skipped), so a re-import of
+ * an overlapping export reads as "nothing new because they already exist"
+ * rather than an unexplained low insert count.
  */
 export function parseImportSummary(lines: string[]): string {
+  let inserted: number | null = null;
+  let skipped: number | null = null;
+  let nothingNew = false;
+
   for (const line of lines) {
-    const inserted = line.match(/^✅ Inserted (\d+) new record/);
-    if (inserted) return `匯入完成 — 新增 ${inserted[1]} 篇文章。`;
-    if (line.startsWith('✅ Nothing new to import')) {
-      return '匯入完成 — 沒有新文章（皆已存在）。';
-    }
+    const i = line.match(/Inserted (\d+) new record/);
+    if (i) inserted = Number(i[1]);
+    const s = line.match(/Skipping (\d+) post\(s\) already in the database/);
+    if (s) skipped = Number(s[1]);
+    if (line.includes('Nothing new to import')) nothingNew = true;
+  }
+
+  const existedNote =
+    skipped && skipped > 0 ? `，另有 ${skipped} 篇已存在資料庫、略過` : '';
+
+  if (inserted !== null && inserted > 0) {
+    return `匯入完成 — 新增 ${inserted} 篇文章${existedNote}。`;
+  }
+  if (nothingNew || inserted === 0) {
+    return skipped && skipped > 0
+      ? `匯入完成 — 沒有新文章，${skipped} 篇皆已存在資料庫。`
+      : '匯入完成 — 沒有新文章。';
   }
   return '匯入流程已結束，但找不到 06_import 的摘要訊息，請檢查上方日誌。';
 }
