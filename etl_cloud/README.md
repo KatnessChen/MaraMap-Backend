@@ -28,8 +28,9 @@
   prepare 與 confirm 落在不同 instance 也沒問題。
 - 媒體正式 key = zip 內部路徑（`your_facebook_activity/posts/media/...`），
   與 `utils/upload-to-r2.js` 的既有慣例一致。
-- 取消批次 = 刪整個 prefix；每週一 04:00 cron 清 30 天前的完成批次與
-  7 天前的孤兒上傳（`FbImportService.sweepStaleBatches`）。
+- 取消或完成批次 = 立即刪掉該批次的大檔（zip、暫存媒體）；被遺忘、既不確認也
+  不取消的批次，靠 R2 Object Lifecycle rule（`pending-imports/` 前綴，於
+  Cloudflare 儀表板設定，見 backend README）按年齡清除。
 
 ## 首次部署需要做的事
 

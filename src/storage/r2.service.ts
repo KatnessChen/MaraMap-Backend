@@ -117,18 +117,6 @@ export class R2Service {
     return res.ContentLength ?? 0;
   }
 
-  /** Last-modified time of an object, or null if it doesn't exist. */
-  async lastModified(key: string): Promise<Date | null> {
-    try {
-      const res = await this.client.send(
-        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
-      return res.LastModified ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   async exists(key: string): Promise<boolean> {
     try {
       await this.client.send(

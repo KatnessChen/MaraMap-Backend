@@ -1,7 +1,6 @@
 import { ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
-import { Cron } from '@nestjs/schedule';
 import { execFileSync, spawn } from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -652,48 +651,11 @@ export class FbImportService {
     }
   }
 
-  /**
-   * Weekly janitor for pending-imports/. Two kinds of leftovers accumulate:
-   * finished batches (audit JSONs, kept 30 days) and abandoned uploads —
-   * a zip PUT via presigned URL whose prepare was never run, invisible in the
-   * admin UI because it has no state.json. Unfinished batches the admin can
-   * still see (review/failed/finalizing) are never auto-deleted.
-   */
-  @Cron('0 4 * * 1')
-  async sweepStaleBatches(): Promise<void> {
-    const DAY = 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    let swept = 0;
-
-    try {
-      const prefixes = await this.r2.listPrefixes(`${R2_ROOT}/`);
-      for (const prefix of prefixes) {
-        const batch = prefix.slice(`${R2_ROOT}/`.length).replace(/\/$/, '');
-        if (this.running.has(batch)) continue;
-
-        const state = await this.readState(batch);
-        if (state) {
-          if (state.phase !== 'done') continue;
-          if (now - Date.parse(state.updatedAt) < 30 * DAY) continue;
-        } else {
-          const uploadedAt = await this.r2.lastModified(this.zipKey(batch));
-          // No state and no zip: nothing usable — sweep. With a recent zip:
-          // an upload whose prepare may still be coming — leave it a week.
-          if (uploadedAt && now - uploadedAt.getTime() < 7 * DAY) continue;
-        }
-
-        const n = await this.r2.deletePrefix(prefix);
-        swept += n;
-        this.logger.log(
-          `Swept stale import batch ${batch} (${state?.phase ?? 'no state'}) — ${n} object(s)`,
-        );
-      }
-    } catch (err) {
-      this.logger.warn(`Stale batch sweep failed: ${(err as Error).message}`);
-    }
-
-    if (swept > 0) this.logger.log(`Sweep removed ${swept} R2 object(s)`);
-  }
+  // Stale-batch cleanup lives in an R2 Object Lifecycle rule on the
+  // `pending-imports/` prefix (configured in the Cloudflare dashboard — see
+  // README), not an in-app cron: a @nestjs/schedule job can't be relied on
+  // under Cloud Run scale-to-zero (no instance alive at the scheduled time),
+  // whereas R2 lifecycle runs on Cloudflare's side regardless.
 
   /** Batches that were prepared but never finished, newest first. */
   async listResumableBatches(): Promise<ImportState[]> {

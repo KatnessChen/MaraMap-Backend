@@ -95,15 +95,6 @@ describe('R2Service', () => {
     await expect(service.headSize('k')).resolves.toBe(42);
   });
 
-  it('lastModified returns the date, or null when missing', async () => {
-    const when = new Date('2026-07-24T00:00:00Z');
-    send.mockResolvedValueOnce({ LastModified: when });
-    await expect(service.lastModified('k')).resolves.toEqual(when);
-
-    send.mockRejectedValueOnce(new Error('404'));
-    await expect(service.lastModified('gone')).resolves.toBeNull();
-  });
-
   it('exists reflects whether HeadObject succeeds', async () => {
     send.mockResolvedValueOnce({});
     await expect(service.exists('k')).resolves.toBe(true);
