@@ -23,6 +23,13 @@ import { StatsService } from '../stats/stats.service';
 // R2 lifecycle rule) and are copied here on create/save.
 const PERMANENT_MEDIA_PREFIX = 'your_facebook_activity/posts/media';
 
+// Pagination inputs arrive off the query string and can be NaN, 0, negative or
+// fractional. Anything that is not a whole number >= 1 falls back to `fallback`.
+function toPositiveInt(value: unknown, fallback: number): number {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
 @Injectable()
 export class FbPostsService {
   private readonly logger = new Logger(FbPostsService.name);
@@ -86,8 +93,15 @@ export class FbPostsService {
     city?: string,
   ) {
     if (!userId) throw new InternalServerErrorException('User ID is required');
-    const p = Math.max(1, Number(page));
-    const l = Math.max(1, Number(limit));
+    // The controller's `page = 1` / `limit = 10` defaults do NOT survive a
+    // missing query param: the global ValidationPipe runs with transform on, so
+    // an absent `?page=` arrives as NaN rather than undefined, and a TS default
+    // only fills in for undefined. Math.max(1, NaN) is NaN, which made the
+    // Supabase .range() return nothing — a bare GET /posts answered with zero
+    // rows next to a total of 514. Coerce here so every caller is covered,
+    // garbage input (?page=abc) included.
+    const p = toPositiveInt(page, 1);
+    const l = toPositiveInt(limit, 10);
     const offset = (p - 1) * l;
     const client = this.supabase.getClient();
     let query = client

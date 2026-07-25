@@ -113,6 +113,39 @@ describe('FbPostsService', () => {
       );
       expect(mockSupabaseClient.range).toHaveBeenCalledWith(0, 9);
     });
+
+    // The global ValidationPipe transforms a missing `?page=` into NaN rather
+    // than undefined, so the controller's TS defaults never fire and .range()
+    // used to be called with NaN — a bare GET /posts returned zero rows.
+    it.each([
+      ['undefined', undefined, undefined],
+      ['NaN (missing query param after transform)', NaN, NaN],
+      ['non-numeric strings', 'abc' as any, 'abc' as any],
+      ['zero', 0, 0],
+      ['negative', -3, -5],
+    ])(
+      'falls back to page 1 / limit 10 for %s',
+      async (_label, page, limit) => {
+        mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+          resolve({ data: [], count: 0, error: null }),
+        );
+
+        const result = await service.findAll('user-123', page, limit);
+
+        expect(mockSupabaseClient.range).toHaveBeenCalledWith(0, 9);
+        expect(result.meta).toMatchObject({ page: 1, limit: 10 });
+      },
+    );
+
+    it('keeps a valid page/limit and offsets from it', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], count: 0, error: null }),
+      );
+
+      await service.findAll('user-123', 3, 20);
+
+      expect(mockSupabaseClient.range).toHaveBeenCalledWith(40, 59);
+    });
   });
 
   describe('findOne', () => {
