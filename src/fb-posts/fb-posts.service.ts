@@ -869,139 +869,205 @@ export class FbPostsService {
     return h > 0 ? `${sign}${h}:${mm}:${ss}` : `${sign}${mm}:${ss}`;
   }
 
+  // The six distance buckets the PB page tracks. Fixed-distance buckets are
+  // ranked by time (faster = better); timed races (6H/12H) are ranked by
+  // distance (farther = better) because there the clock is the constant. Any
+  // race that is not one of these six is deliberately excluded — one-off
+  // distances (round-island stage races, odd ultras) have no progression of
+  // their own and only add noise.
+  private readonly PB_BUCKET_ORDER = ['半馬', '全馬', '50K', '100K', '6H', '12H'];
+
+  private classifyPbRace(
+    p: any,
+    title: string,
+  ): { bucket: string; mode: 'time' | 'distance'; value: number } | null {
+    const type: string = p.distance || '';
+    const km: number | null = p.stats?.distance_km ?? null;
+    const timeSeconds = this.parseTimeToSeconds(p.time || '');
+    const looksMarathon = km != null && km >= 40 && km <= 44;
+
+    // Timed race — detect ONLY by event-name markers (射日組/陽光組, "N小時超馬")
+    // or an exact N:00:00 clock. NEVER by finish-time prose like "跑 4 小時 36
+    // 分", which titles routinely contain and would misfile ordinary marathons
+    // as timed races. A marathon-range distance also vetoes the timed reading.
+    const timedByName =
+      /射日|陽光|(\d+)\s*小時[^,，。]{0,8}(?:超馬|挑戰|賽)|(\d+)\s*H\s*(?:組|射日|陽光)/.test(
+        `${title} ${type}`,
+      );
+    const exactCap = /^0?(\d{1,2}):00:00$/.exec(p.time || '');
+    if ((timedByName || exactCap) && !looksMarathon && km != null) {
+      const nameHrs = /(\d+)\s*(?:小時|H)/i.exec(title);
+      const hrs = nameHrs
+        ? nameHrs[1]
+        : exactCap
+          ? String(parseInt(exactCap[1], 10))
+          : null;
+      if (hrs && ['6', '12'].includes(hrs)) {
+        return { bucket: `${hrs}H`, mode: 'distance', value: km };
+      }
+      return null; // timed but an unsupported cap → excluded
+    }
+
+    // Fixed-distance buckets, ranked by time. Only the four named distances;
+    // distance_km bands catch ultras that carry a km, type strings catch the
+    // standard races that often omit it.
+    if (timeSeconds == null) return null;
+    if (type === '半馬' || (km != null && km >= 20 && km <= 22))
+      return { bucket: '半馬', mode: 'time', value: timeSeconds };
+    if (type === '全馬' || (km != null && km >= 40 && km <= 44))
+      return { bucket: '全馬', mode: 'time', value: timeSeconds };
+    if (km != null && km >= 48 && km <= 52)
+      return { bucket: '50K', mode: 'time', value: timeSeconds };
+    if (km != null && km >= 95 && km <= 105)
+      return { bucket: '100K', mode: 'time', value: timeSeconds };
+    return null; // non-standard distance → excluded by design
+  }
+
   async findPersonalBests(userId: string) {
     if (!userId) return { participants: {} };
     const cacheKey = `pb:${userId}`;
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) return cached;
     const client = this.supabase.getClient();
+    // Include 旅遊 as well as 馬拉松: many of Davis's half marathons are filed
+    // under 旅遊, not 馬拉松. To avoid disturbing the other buckets, a 旅遊 post
+    // only contributes to the 半馬 bucket (see the guard in the loop) — its 全馬
+    // and 超馬 entries, which are also mis-filed there, are left out on purpose.
     const { data, error } = await client
       .from('fb_posts')
-      .select('id, event_date, title, is_personal_best, metadata')
+      .select('id, event_date, title, category, metadata')
       .eq('user_id', userId)
       .eq('is_hidden', false)
-      .eq('category', '馬拉松')
+      .in('category', ['馬拉松', '旅遊'])
       .order('event_date', { ascending: true });
     if (error || !data) return { participants: {} };
 
-    type BestEntry = {
-      time: string;
-      timeSeconds: number;
-      raceName: string | null;
-      date: string;
-      postId: string;
-      country: string | null;
-      distanceKm: number | null;
+    const fmtClock = (secs: number) => {
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
+      return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     };
-    type TimelineEntry = {
+
+    type Milestone = {
       date: string;
       raceName: string | null;
-      country: string | null;
-      distance: string;
-      time: string;
       postId: string;
+      country: string | null;
+      display: string;
       delta: string | null;
     };
-    type ParticipantData = {
-      bests: Record<string, BestEntry>;
-      timeline: TimelineEntry[];
+    type Bucket = {
+      mode: 'time' | 'distance';
+      record: number;
+      best: Omit<Milestone, 'delta'>;
+      progression: Milestone[];
     };
 
-    const participantMap: Record<string, ParticipantData> = {};
+    // participant -> bucket -> running state. Posts are ASC by date, so a single
+    // forward pass yields the record progression directly: each race that beats
+    // the running record is a new PB milestone. This replaces the old manual
+    // is_personal_best flag entirely.
+    const byParticipant: Record<string, Record<string, Bucket>> = {};
 
     for (const post of data) {
-      const participants: any[] = post.metadata?.participants || [];
       const raceName: string | null =
         post.metadata?.race_name || post.title || null;
       const country: string | null = post.metadata?.country || null;
-      const isPostPB: boolean = post.is_personal_best === true;
+      for (const p of post.metadata?.participants || []) {
+        if (!p.name) continue;
+        const cls = this.classifyPbRace(p, post.title || '');
+        if (!cls) continue;
+        // 旅遊 posts are scanned only for half marathons; their mis-filed
+        // 全馬/超馬 entries do not count toward those buckets.
+        if (post.category === '旅遊' && cls.bucket !== '半馬') continue;
+        const { bucket, mode, value } = cls;
 
-      for (const p of participants) {
-        if (!p.name || !p.time || !p.distance) continue;
-        const name: string = p.name;
-        if (!participantMap[name])
-          participantMap[name] = { bests: {}, timeline: [] };
-        const pData = participantMap[name];
+        byParticipant[p.name] ??= {};
+        const buckets = byParticipant[p.name];
+        const existing = buckets[bucket];
+        const isImprovement =
+          !existing ||
+          (mode === 'time'
+            ? value < existing.record
+            : value > existing.record);
+        if (!isImprovement) continue;
 
-        const timeSeconds = this.parseTimeToSeconds(p.time);
-        if (timeSeconds === null) continue;
-
-        // Update current best if faster
-        const existing = pData.bests[p.distance];
-        if (!existing || timeSeconds < existing.timeSeconds) {
-          pData.bests[p.distance] = {
-            time: p.time,
-            timeSeconds,
-            raceName,
-            date: post.event_date,
-            postId: post.id,
-            country,
-            distanceKm: p.stats?.distance_km ?? null,
+        const display = mode === 'time' ? fmtClock(value) : `${value}K`;
+        const best = {
+          date: post.event_date,
+          raceName,
+          postId: post.id,
+          country,
+          display,
+        };
+        if (!existing) {
+          buckets[bucket] = {
+            mode,
+            record: value,
+            best,
+            progression: [{ ...best, delta: null }],
           };
-        }
-
-        // Add to timeline if post-level OR participant-level PB flag
-        if (isPostPB || p.is_personal_best === true) {
-          pData.timeline.push({
-            date: post.event_date,
-            raceName,
-            country,
-            distance: p.distance,
-            time: p.time,
-            postId: post.id,
-            delta: null,
-          });
+        } else {
+          const delta =
+            mode === 'time'
+              ? this.formatDelta(value - existing.record)
+              : `+${(value - existing.record).toFixed(2)}K`;
+          existing.record = value;
+          existing.best = best;
+          existing.progression.push({ ...best, delta });
         }
       }
     }
 
-    // Compute delta per participant per distance (data is already ASC by date)
-    for (const pData of Object.values(participantMap)) {
-      const prevByDistance: Record<string, number> = {};
-      pData.timeline = pData.timeline.map((entry) => {
-        const timeSeconds = this.parseTimeToSeconds(entry.time);
-        const prev = prevByDistance[entry.distance];
-        let delta: string | null = null;
-        if (prev !== undefined && timeSeconds !== null) {
-          const diff = timeSeconds - prev;
-          if (diff !== 0) delta = this.formatDelta(diff);
-        }
-        if (timeSeconds !== null) prevByDistance[entry.distance] = timeSeconds;
-        return { ...entry, delta };
-      });
-    }
-
-    // Strip internal timeSeconds from bests
+    // Shape output: bucket order fixed, internal `record` stripped.
     const result: Record<
       string,
       {
-        bests: Record<string, Omit<BestEntry, 'timeSeconds'>>;
-        timeline: TimelineEntry[];
+        records: Record<
+          string,
+          {
+            mode: 'time' | 'distance';
+            best: Omit<Milestone, 'delta'>;
+            progression: Milestone[];
+          }
+        >;
       }
     > = {};
-    for (const [name, pData] of Object.entries(participantMap)) {
-      if (pData.timeline.length === 0 && Object.keys(pData.bests).length === 0)
-        continue;
-      result[name] = {
-        bests: Object.fromEntries(
-          Object.entries(pData.bests).map(([dist, b]) => [
-            dist,
-            {
-              time: b.time,
-              raceName: b.raceName,
-              date: b.date,
-              postId: b.postId,
-              country: b.country,
-              distanceKm: b.distanceKm,
-            },
-          ]),
-        ),
-        timeline: pData.timeline,
-      };
+    for (const [name, buckets] of Object.entries(byParticipant)) {
+      const ordered = this.PB_BUCKET_ORDER.filter((b) => buckets[b]);
+      if (ordered.length === 0) continue;
+      const records: Record<string, any> = {};
+      for (const b of ordered) {
+        records[b] = {
+          mode: buckets[b].mode,
+          best: buckets[b].best,
+          progression: buckets[b].progression,
+        };
+      }
+      result[name] = { records };
     }
 
-    await this.cacheManager.set(cacheKey, { participants: result });
+    // Cache for a day rather than the global 1h default. PB only changes when a
+    // post is created/edited/deleted or a trip is reassigned — and each of those
+    // paths already deletes this key — so the TTL is just a backstop for the one
+    // gap those hooks miss: the ETL importer, which writes to Supabase directly.
+    // A longer TTL is safe here precisely because writes invalidate explicitly.
+    const PB_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+    await this.cacheManager.set(cacheKey, { participants: result }, PB_CACHE_TTL_MS);
     return { participants: result };
+  }
+
+  /**
+   * Admin action: force a fresh Personal Best computation. PB is computed
+   * lazily and cached, so this drops the cache and recomputes now — the manual
+   * escape hatch for out-of-band writes (e.g. the ETL importer) that would
+   * otherwise wait out the day-long TTL. Throws if the recompute fails, so the
+   * caller can report success/failure.
+   */
+  async recomputePersonalBests(userId: string) {
+    await this.cacheManager.del(`pb:${userId}`);
+    return this.findPersonalBests(userId);
   }
 
   async remove(userId: string, id: string) {
@@ -1028,6 +1094,7 @@ export class FbPostsService {
       }
     }
 
+    await this.cacheManager.del(`pb:${userId}`);
     await this.stats.refreshAfterMutation(`post delete ${id}`);
     return data;
   }

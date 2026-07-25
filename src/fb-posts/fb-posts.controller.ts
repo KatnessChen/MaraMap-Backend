@@ -97,6 +97,15 @@ export class FbPostsController {
     return this.fbPostsService.findPersonalBests(targetUserId);
   }
 
+  // Admin-only (no @Public): drop the PB cache and recompute now.
+  @Post('personal-best/recompute')
+  @ApiOperation({ summary: '重新計算個人最佳成績（管理員）' })
+  async recomputePersonalBest(@Query('user_id') userId?: string) {
+    const targetUserId = this.getTargetUserId(userId);
+    await this.fbPostsService.recomputePersonalBests(targetUserId);
+    return { success: true };
+  }
+
   @Public()
   @Get('posts/:id')
   @ApiOperation({ summary: '取得單篇文章詳情' })
