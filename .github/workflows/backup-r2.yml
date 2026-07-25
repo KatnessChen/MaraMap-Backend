@@ -1,0 +1,161 @@
+name: Backup R2 media (off-Cloudflare)
+
+# R2 has no native object versioning and no cross-bucket replication (both are
+# still open feature requests as of 2026), so the 11 GB of Facebook-export media
+# has exactly one copy today. Two of our own code paths can destroy originals
+# irrecoverably:
+#   - fb-posts.service.ts remove()/update() call r2.delete() on a post's media.
+#   - a mis-scoped prefix on the R2 Object Lifecycle rules (set in the
+#     Cloudflare dashboard, see README) would expire real objects.
+# The source photos (2016→) cannot be regenerated, so this mirrors them OFF
+# Cloudflare — a copy in another R2 bucket dies with the same account/credentials
+# and is not a backup.
+#
+# Destination is Backblaze B2 (S3-compatible). R2 egress is free, so pulling the
+# whole bucket out costs nothing; B2 storage is ~$6/TB/mo → ~$0.07/mo for 11 GB.
+#
+# Required secrets:
+#   R2_ENDPOINT / R2_BUCKET_NAME / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
+#     — the SOURCE (existing secrets, read scope is enough).
+#   B2_ENDPOINT       e.g. https://s3.us-west-004.backblazeb2.com
+#   B2_BUCKET_NAME    destination bucket
+#   B2_KEY_ID / B2_APP_KEY  — a B2 application key scoped to that bucket.
+
+on:
+  schedule:
+    # Weekly, not nightly: media is append-mostly and 11 GB of HEAD requests
+    # every night is wasteful. Sunday 09:00 UTC = 05:00 Ottawa (EDT).
+    - cron: '0 9 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  # A big sync can outrun the weekly tick; never let two overlap.
+  group: backup-r2
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Install rclone
+        run: |
+          sudo -v && curl -fsSL https://rclone.org/install.sh | sudo bash
+          rclone version
+
+      - name: Configure remotes
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          B2_ENDPOINT: ${{ secrets.B2_ENDPOINT }}
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+        run: |
+          for v in R2_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY \
+                   B2_ENDPOINT B2_KEY_ID B2_APP_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Secret $v is not set. See this workflow's header for the full list."
+              exit 1
+            fi
+          done
+          mkdir -p ~/.config/rclone
+          # Both are the generic S3 provider; provider=Other keeps rclone from
+          # applying AWS-specific quirks to R2/B2.
+          cat > ~/.config/rclone/rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${R2_ACCESS_KEY_ID}
+          secret_access_key = ${R2_SECRET_ACCESS_KEY}
+          endpoint = ${R2_ENDPOINT}
+
+          [b2]
+          type = s3
+          provider = Other
+          access_key_id = ${B2_KEY_ID}
+          secret_access_key = ${B2_APP_KEY}
+          endpoint = ${B2_ENDPOINT}
+          EOF
+
+      - name: Mirror R2 → B2
+        env:
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+        run: |
+          STAMP=$(date -u +%Y-%m-%d)
+          # --backup-dir is the whole point: plain `sync` deletes from the
+          # destination anything deleted at the source, so a wrongly-deleted post
+          # would propagate into the backup on the next run. Instead, objects the
+          # source no longer has are MOVED into _deleted/<date>/ on B2 — a
+          # recoverable tombstone, not a destructive mirror.
+          rclone sync "r2:${R2_BUCKET_NAME}" "b2:${B2_BUCKET_NAME}/current" \
+            --backup-dir "b2:${B2_BUCKET_NAME}/_deleted/${STAMP}" \
+            --fast-list \
+            --transfers 16 \
+            --checkers 32 \
+            --retries 3 \
+            --stats 30s \
+            --stats-one-line \
+            --exclude "tmp/**"   # ephemeral unclaimed uploads; no point backing up
+
+      - name: Verify the mirror is non-empty and consistent
+        env:
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+        run: |
+          SRC=$(rclone size "r2:${R2_BUCKET_NAME}" --exclude "tmp/**" --json)
+          DST=$(rclone size "b2:${B2_BUCKET_NAME}/current" --json)
+          SRC_N=$(echo "$SRC" | python3 -c "import sys,json;print(json.load(sys.stdin)['count'])")
+          DST_N=$(echo "$DST" | python3 -c "import sys,json;print(json.load(sys.stdin)['count'])")
+          echo "source objects: $SRC_N | mirror objects: $DST_N"
+          if [ "$DST_N" -eq 0 ]; then
+            echo "::error::Mirror is empty — refusing to report success."
+            exit 1
+          fi
+          # After a clean sync the counts match. A small drift can happen if the
+          # bucket is written to mid-sync; a large one means the sync did not
+          # finish. Flag >1% so a genuinely partial run is not silently accepted.
+          DIFF=$(( SRC_N > DST_N ? SRC_N - DST_N : DST_N - SRC_N ))
+          THRESH=$(( SRC_N / 100 + 1 ))
+          if [ "$DIFF" -gt "$THRESH" ]; then
+            echo "::error::Object counts differ by ${DIFF} (>1%). Sync likely did not complete."
+            exit 1
+          fi
+          echo "✅ Mirror verified: ${DST_N} objects on B2."
+
+      - name: Report failure as an issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              labels: 'backup-failure', state: 'open',
+            });
+            if (existing.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: `### R2 media mirror failed — ${today}\n\n[View run](${runUrl})`,
+              });
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title: `🔴 R2 media backup failed — ${today}`,
+              body: [
+                `## R2 → B2 mirror failure — ${today}`,
+                '',
+                'The 11 GB of Facebook media has no other copy when this fails.',
+                '',
+                `[View run](${runUrl})`,
+              ].join('\n'),
+              labels: ['backup-failure'],
+            });
