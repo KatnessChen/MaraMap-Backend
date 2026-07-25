@@ -169,9 +169,7 @@ describe('FbImportService', () => {
   const seedState = (batch: string, phase: string, updatedAt: string) =>
     r2.store.set(
       `pending-imports/${batch}/state.json`,
-      Buffer.from(
-        JSON.stringify({ batch, phase, postCount: 2, updatedAt }),
-      ),
+      Buffer.from(JSON.stringify({ batch, phase, postCount: 2, updatedAt })),
     );
 
   // Local-file behavior for the spawn stages' outputs the service reads back.
@@ -180,11 +178,9 @@ describe('FbImportService', () => {
   const mockLocalFiles = () => {
     const written = new Map<string, string>();
     jest.spyOn(fs, 'existsSync').mockReturnValue(true);
-    jest
-      .spyOn(fs, 'writeFileSync')
-      .mockImplementation((p: any, data: any) => {
-        written.set(String(p), String(data));
-      });
+    jest.spyOn(fs, 'writeFileSync').mockImplementation((p: any, data: any) => {
+      written.set(String(p), String(data));
+    });
     jest.spyOn(fs, 'readFileSync').mockImplementation((p: any) => {
       const s = String(p);
       if (written.has(s)) return written.get(s)!;
@@ -498,9 +494,9 @@ describe('FbImportService', () => {
       const { removed, r2Objects } = await service.cancelBatch('batch-7');
 
       expect(r2Objects).toBe(5);
-      expect(
-        [...r2.store.keys()].filter((k) => k.includes('batch-7')),
-      ).toEqual([]);
+      expect([...r2.store.keys()].filter((k) => k.includes('batch-7'))).toEqual(
+        [],
+      );
       expect(removed).toEqual([
         'etl_local/01_ingest/raw/batch-7',
         'etl_local/01_ingest/output/batch-7',

@@ -152,7 +152,9 @@ export class FbImportController {
       for await (const event of this.fbImportService.runFinalizePipeline(
         batch,
         Array.isArray(edits) ? edits : [],
-        Array.isArray(skipped) ? skipped.filter((n) => typeof n === 'number') : [],
+        Array.isArray(skipped)
+          ? skipped.filter((n) => typeof n === 'number')
+          : [],
       )) {
         emit(event);
       }

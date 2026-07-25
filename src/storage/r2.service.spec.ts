@@ -51,7 +51,11 @@ describe('R2Service', () => {
 
   it('upload puts the buffer and returns the public URL', async () => {
     send.mockResolvedValue({});
-    const url = await service.upload('k/a.json', Buffer.from('{}'), 'application/json');
+    const url = await service.upload(
+      'k/a.json',
+      Buffer.from('{}'),
+      'application/json',
+    );
     expect(url).toBe('https://cdn.test/k/a.json');
     const input = send.mock.calls[0][0].input;
     expect(input).toMatchObject({

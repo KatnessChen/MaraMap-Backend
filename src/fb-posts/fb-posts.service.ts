@@ -875,7 +875,14 @@ export class FbPostsService {
   // race that is not one of these six is deliberately excluded — one-off
   // distances (round-island stage races, odd ultras) have no progression of
   // their own and only add noise.
-  private readonly PB_BUCKET_ORDER = ['半馬', '全馬', '50K', '100K', '6H', '12H'];
+  private readonly PB_BUCKET_ORDER = [
+    '半馬',
+    '全馬',
+    '50K',
+    '100K',
+    '6H',
+    '12H',
+  ];
 
   private classifyPbRace(
     p: any,
@@ -988,9 +995,7 @@ export class FbPostsService {
         const existing = buckets[bucket];
         const isImprovement =
           !existing ||
-          (mode === 'time'
-            ? value < existing.record
-            : value > existing.record);
+          (mode === 'time' ? value < existing.record : value > existing.record);
         if (!isImprovement) continue;
 
         const display = mode === 'time' ? fmtClock(value) : `${value}K`;
@@ -1054,7 +1059,11 @@ export class FbPostsService {
     // gap those hooks miss: the ETL importer, which writes to Supabase directly.
     // A longer TTL is safe here precisely because writes invalidate explicitly.
     const PB_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-    await this.cacheManager.set(cacheKey, { participants: result }, PB_CACHE_TTL_MS);
+    await this.cacheManager.set(
+      cacheKey,
+      { participants: result },
+      PB_CACHE_TTL_MS,
+    );
     return { participants: result };
   }
 

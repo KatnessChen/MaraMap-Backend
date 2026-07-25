@@ -47,12 +47,18 @@ const PREPARE_SPAWN_STAGES: Stage[] = [
 // reached R2 during prepare (media_stage), so publish_media only needs
 // server-side copies + a DB URI rewrite — both in-process, no local files.
 const FINALIZE_SPAWN_STAGES: Stage[] = [
-  { name: '03_analyze_base', script: 'etl_local/03_analyze/00_base/analyze.js' },
+  {
+    name: '03_analyze_base',
+    script: 'etl_local/03_analyze/00_base/analyze.js',
+  },
   {
     name: '03_analyze_marathon',
     script: 'etl_local/03_analyze/01_marathon/analyze.js',
   },
-  { name: '03_analyze_hiking', script: 'etl_local/03_analyze/02_hiking/analyze.js' },
+  {
+    name: '03_analyze_hiking',
+    script: 'etl_local/03_analyze/02_hiking/analyze.js',
+  },
   { name: '04_format', script: 'etl_local/04_format/analyze.js' },
   { name: '05_merge', script: 'etl_local/05_merge/merge.js' },
   { name: '06_import', script: 'etl_local/06_import/import-to-supabase.js' },
@@ -153,7 +159,10 @@ export class FbImportService {
     return `${R2_ROOT}/${batch}/workspace/${file}`;
   }
 
-  private localWorkspacePath(batch: string, entry: { file: string; dir: string }) {
+  private localWorkspacePath(
+    batch: string,
+    entry: { file: string; dir: string },
+  ) {
     return path.join(this.repoRoot, entry.dir, batch, entry.file);
   }
 
@@ -187,7 +196,12 @@ export class FbImportService {
         line: `Zip has ${zipDir.files.length} entries — extracted ${fileCount} JSON file(s) to raw/${batch}/ (media stays in R2)`,
       };
       for (const w of warnings) {
-        yield { type: 'log', stage: 'unzip', stream: 'stderr', line: `⚠️ ${w}` };
+        yield {
+          type: 'log',
+          stage: 'unzip',
+          stream: 'stderr',
+          line: `⚠️ ${w}`,
+        };
       }
       yield { type: 'stage-end', stage: 'unzip', exitCode: 0 };
 
@@ -336,9 +350,7 @@ export class FbImportService {
       // paths that normally drop this key, so the Personal Best cache would
       // otherwise serve stale data until its (now day-long) TTL expired. Clear
       // it here so an import shows up immediately. Best-effort, per-instance.
-      await this.cache
-        .del(`pb:${process.env.USER_ID}`)
-        .catch(() => undefined);
+      await this.cache.del(`pb:${process.env.USER_ID}`).catch(() => undefined);
     }
   }
 
@@ -543,7 +555,8 @@ export class FbImportService {
       const chunk = uriList.slice(i, i + MEDIA_CONCURRENCY);
       const results = await Promise.all(
         chunk.map(async (uri) => {
-          if (await this.r2.exists(uri)) return { uri, status: 'existed' as const };
+          if (await this.r2.exists(uri))
+            return { uri, status: 'existed' as const };
           const stagingKey = `${this.stagingPrefix(batch)}${uri}`;
           if (!(await this.r2.exists(stagingKey))) {
             return { uri, status: 'missing' as const };
@@ -779,9 +792,7 @@ export class FbImportService {
 
   /** Downloads the R2 workspace into the local paths the stage scripts read. */
   private async hydrateWorkspace(batch: string): Promise<number> {
-    const keys = new Set(
-      await this.r2.list(`${R2_ROOT}/${batch}/workspace/`),
-    );
+    const keys = new Set(await this.r2.list(`${R2_ROOT}/${batch}/workspace/`));
     let count = 0;
     for (const entry of WORKSPACE_FILES) {
       const key = this.workspaceKey(batch, entry.file);

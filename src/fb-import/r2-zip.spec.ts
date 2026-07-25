@@ -41,9 +41,9 @@ describe('entryPath', () => {
 
   it('falls back to latin1 when the bytes are not valid UTF-8', () => {
     const latin1Name = Buffer.from('caf\xe9.json', 'latin1');
-    expect(
-      entryPath(fakeFile({ isUnicode: 0, pathBuffer: latin1Name })),
-    ).toBe('café.json');
+    expect(entryPath(fakeFile({ isUnicode: 0, pathBuffer: latin1Name }))).toBe(
+      'café.json',
+    );
   });
 });
 
