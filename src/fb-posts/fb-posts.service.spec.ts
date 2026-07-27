@@ -25,6 +25,10 @@ describe('FbPostsService', () => {
       .mockImplementation((key: string) =>
         Promise.resolve(`https://cdn.example.com/${key}`),
       ),
+    presignPut: jest
+      .fn()
+      .mockResolvedValue('https://r2.example.com/presigned-put'),
+    headSize: jest.fn().mockResolvedValue(1024),
     keyFromUrl: jest.fn((uri: string) =>
       uri?.startsWith('https://cdn.example.com/')
         ? uri.replace('https://cdn.example.com/', '')
@@ -79,6 +83,12 @@ describe('FbPostsService', () => {
     mockR2Service.delete.mockClear();
     mockR2Service.delete.mockResolvedValue(undefined);
     mockR2Service.upload.mockClear();
+    mockR2Service.presignPut.mockClear();
+    mockR2Service.presignPut.mockResolvedValue(
+      'https://r2.example.com/presigned-put',
+    );
+    mockR2Service.headSize.mockClear();
+    mockR2Service.headSize.mockResolvedValue(1024);
     mockR2Service.copy.mockClear();
     mockR2Service.copy.mockResolvedValue(undefined);
     mockSupabaseClient.insert.mockClear();
@@ -356,70 +366,31 @@ describe('FbPostsService', () => {
     });
   });
 
-  describe('uploadMedia', () => {
-    const file = (mimetype: string, size = 1024) =>
-      ({
-        buffer: Buffer.from('media'),
-        mimetype,
-        size,
-        originalname: 'x',
-      }) as Express.Multer.File;
-
-    it('uploads a valid image to R2 and returns key + url + photo type', async () => {
-      const result = await service.uploadMedia('user-123', file('image/png'));
-      expect(mockR2Service.upload).toHaveBeenCalledTimes(1);
-      const [key, , contentType] = mockR2Service.upload.mock.calls[0];
+  describe('createUploadUrl', () => {
+    it('signs a presigned PUT and returns key + urls + photo type for an image', async () => {
+      const result = await service.createUploadUrl('user-123', 'image/png');
+      expect(mockR2Service.presignPut).toHaveBeenCalledTimes(1);
+      const [key, contentType] = mockR2Service.presignPut.mock.calls[0];
       expect(key).toMatch(/^tmp\/user-123\/.*\.png$/);
       expect(contentType).toBe('image/png');
       expect(result.key).toBe(key);
-      expect(result.url).toBe(`https://cdn.example.com/${key}`);
+      expect(result.uploadUrl).toBe('https://r2.example.com/presigned-put');
+      expect(result.publicUrl).toContain(key);
       expect(result.type).toBe('photo');
     });
 
-    it('uploads a valid video to R2 and returns video type', async () => {
-      const result = await service.uploadMedia('user-123', file('video/mp4'));
-      const [key] = mockR2Service.upload.mock.calls[0];
+    it('returns video type for a video mime', async () => {
+      const result = await service.createUploadUrl('user-123', 'video/mp4');
+      const [key] = mockR2Service.presignPut.mock.calls[0];
       expect(key).toMatch(/^tmp\/user-123\/.*\.mp4$/);
       expect(result.type).toBe('video');
     });
 
-    it('rejects an unsupported mime type without touching R2', async () => {
+    it('rejects an unsupported mime type without signing', async () => {
       await expect(
-        service.uploadMedia('user-123', file('application/pdf')),
+        service.createUploadUrl('user-123', 'application/pdf'),
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(mockR2Service.upload).not.toHaveBeenCalled();
-    });
-
-    it('rejects an image over the 8MB limit without touching R2', async () => {
-      await expect(
-        service.uploadMedia('user-123', file('image/jpeg', 9 * 1024 * 1024)),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(mockR2Service.upload).not.toHaveBeenCalled();
-    });
-
-    it('accepts a video within the 64MB limit that would exceed the image limit', async () => {
-      const result = await service.uploadMedia(
-        'user-123',
-        file('video/mp4', 40 * 1024 * 1024),
-      );
-      expect(result.type).toBe('video');
-      expect(mockR2Service.upload).toHaveBeenCalledTimes(1);
-    });
-
-    it('rejects a video over the 64MB limit without touching R2', async () => {
-      await expect(
-        service.uploadMedia('user-123', file('video/mp4', 65 * 1024 * 1024)),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(mockR2Service.upload).not.toHaveBeenCalled();
-    });
-
-    it('rejects when no file is provided', async () => {
-      await expect(
-        service.uploadMedia(
-          'user-123',
-          undefined as unknown as Express.Multer.File,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockR2Service.presignPut).not.toHaveBeenCalled();
     });
   });
 

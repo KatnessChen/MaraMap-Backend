@@ -700,46 +700,35 @@ export class FbPostsService {
     'video/webm': 'webm',
   };
 
-  // Per-type ceilings, sized from the real corpus (images top out ~4.4MB,
-  // videos ~58MB). The controller's multer fileSize limit is the hard memory
-  // guard; these give a friendly per-type message. VIDEO_MAX_BYTES is the
-  // source of truth for the interceptor limit too.
+  // Per-type ceilings. Media no longer transits Cloud Run — the browser PUTs
+  // straight to R2 via a presigned URL — so there is no multer buffer to guard.
+  // These are the source of truth for the friendly limit messages (frontend
+  // pre-checks against the same numbers) and for the claim-time HEAD backstop on
+  // videos. Images top out ~7MB in the real corpus; videos are raw originals now.
   static readonly IMAGE_MAX_BYTES = 8 * 1024 * 1024;
-  static readonly VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+  static readonly VIDEO_MAX_BYTES = 200 * 1024 * 1024;
 
   /**
-   * 把後台上傳的圖片/影片存到 R2，回傳完整網址（可直接寫入 media[].uri /
-   * cover_image；normalizePost 對 http 開頭原樣放行）與媒體型別。
+   * 產生 presigned PUT URL，讓後台瀏覽器把圖片/影片「直接」上傳到 R2（繞過
+   * Cloud Run 的 32MB 請求上限）。回傳 uploadUrl 供瀏覽器 PUT，以及要寫進
+   * media[].uri / cover_image 的 publicUrl。實際檔案大小無法在簽章時限制，
+   * 因此影片會在 claimTmpMedia 以 HEAD 做最終把關（前端也會先擋）。
    */
-  async uploadMedia(userId: string, file: Express.Multer.File) {
-    if (!file || !file.buffer) {
-      throw new BadRequestException('沒有收到檔案。');
-    }
-    const imageExt = this.IMAGE_MIME_EXT[file.mimetype];
-    const videoExt = this.VIDEO_MIME_EXT[file.mimetype];
+  async createUploadUrl(userId: string, contentType: string) {
+    const imageExt = this.IMAGE_MIME_EXT[contentType];
+    const videoExt = this.VIDEO_MIME_EXT[contentType];
 
     let ext: string;
     let type: 'photo' | 'video';
-    let maxBytes: number;
     if (imageExt) {
       ext = imageExt;
       type = 'photo';
-      maxBytes = FbPostsService.IMAGE_MAX_BYTES;
     } else if (videoExt) {
       ext = videoExt;
       type = 'video';
-      maxBytes = FbPostsService.VIDEO_MAX_BYTES;
     } else {
       throw new BadRequestException(
         '僅支援 JPG / PNG / WebP / GIF 圖片，或 MP4 / MOV / WebM 影片。',
-      );
-    }
-
-    const size = file.size ?? file.buffer.length;
-    if (size > maxBytes) {
-      const mb = Math.round(maxBytes / 1024 / 1024);
-      throw new BadRequestException(
-        `${type === 'photo' ? '圖片' : '影片'}不可超過 ${mb}MB。`,
       );
     }
 
@@ -748,8 +737,11 @@ export class FbPostsService {
     // claimed (abandoned drafts) is swept by the R2 Object Lifecycle rule on
     // `tmp/` (configured in the Cloudflare dashboard — see README).
     const key = `tmp/${userId}/${Date.now()}-${randomUUID()}.${ext}`;
-    const url = await this.r2.upload(key, file.buffer, file.mimetype);
-    return { key, url, type };
+    const uploadUrl = await this.r2.presignPut(key, contentType);
+    const publicUrl = process.env.R2_PUBLIC_URL
+      ? `${process.env.R2_PUBLIC_URL}/${key}`
+      : key;
+    return { key, uploadUrl, publicUrl, type };
   }
 
   /**
@@ -777,6 +769,24 @@ export class FbPostsService {
       if (!key || !key.startsWith(tmpPrefix)) {
         newMedia.push(m);
         continue;
+      }
+      // Presigned PUTs can't enforce a max size, so back-stop videos here before
+      // promoting them. Only a confirmed oversize aborts the save (atomic — no
+      // row is written yet); a HEAD failure just skips the check and lets copy
+      // handle a missing object.
+      if (m.type === 'video') {
+        let size = 0;
+        try {
+          size = await this.r2.headSize(key);
+        } catch (err: any) {
+          this.logger.warn(
+            `headSize failed for ${key}: ${err?.message || err}`,
+          );
+        }
+        if (size > FbPostsService.VIDEO_MAX_BYTES) {
+          const mb = Math.round(FbPostsService.VIDEO_MAX_BYTES / 1024 / 1024);
+          throw new BadRequestException(`影片超過 ${mb}MB，無法儲存。`);
+        }
       }
       const destKey = `${PERMANENT_MEDIA_PREFIX}/${key.slice(tmpPrefix.length)}`;
       try {

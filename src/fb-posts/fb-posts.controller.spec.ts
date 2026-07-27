@@ -14,7 +14,7 @@ describe('FbPostsController', () => {
     findOne: jest.fn(),
     fuzzySearch: jest.fn(),
     create: jest.fn(),
-    uploadMedia: jest.fn(),
+    createUploadUrl: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
     findLocations: jest.fn(),
@@ -155,11 +155,16 @@ describe('FbPostsController', () => {
     });
   });
 
-  describe('uploadPostMedia', () => {
-    it('should call service.uploadMedia with the target user and file', async () => {
-      const file = { mimetype: 'image/png' } as Express.Multer.File;
-      await controller.uploadPostMedia(file, 'user-1');
-      expect(service.uploadMedia).toHaveBeenCalledWith('user-1', file);
+  describe('createPostUploadUrl', () => {
+    it('should call service.createUploadUrl with the target user and content type', async () => {
+      await controller.createPostUploadUrl(
+        { contentType: 'video/mp4' },
+        'user-1',
+      );
+      expect(service.createUploadUrl).toHaveBeenCalledWith(
+        'user-1',
+        'video/mp4',
+      );
     });
   });
 });
