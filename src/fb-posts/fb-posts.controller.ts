@@ -11,14 +11,12 @@ import {
   UseGuards,
   Req,
   Header,
-  UseInterceptors,
-  UploadedFile,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { FbPostsService } from './fb-posts.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UpdateFbPostDto } from './update-fb-post.dto';
 import { CreateFbPostDto } from './create-fb-post.dto';
+import { CreateUploadUrlDto } from './create-upload-url.dto';
 import { FuzzySearchDto } from './fb-post.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { Public } from '../auth/decorators/public.decorator';
@@ -113,27 +111,25 @@ export class FbPostsController {
     @Req() req: any,
     @Param('id') id: string,
     @Query('user_id') userId?: string,
+    @Query('preview') preview?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
-    return this.fbPostsService.findOne(targetUserId, id, req.isAdmin);
+    const canPreview = preview === 'true';
+    return this.fbPostsService.findOne(targetUserId, id, req.isAdmin || canPreview);
   }
 
-  @Post('posts/upload-media')
+  @Post('posts/upload-url')
   @ApiBearerAuth('admin-token')
-  @ApiOperation({ summary: '上傳文章圖片/影片至 R2 (僅限管理員)' })
-  @UseInterceptors(
-    // Hard memory guard = the largest allowed media (video). Per-type limits
-    // (image 8MB / video 64MB) are enforced in the service for clear errors.
-    FileInterceptor('file', {
-      limits: { fileSize: FbPostsService.VIDEO_MAX_BYTES },
-    }),
-  )
-  async uploadPostMedia(
-    @UploadedFile() file: Express.Multer.File,
+  @ApiOperation({
+    summary:
+      '產生 presigned URL 讓瀏覽器把圖片/影片直接上傳至 R2，繞過 Cloud Run 32MB 請求上限 (僅限管理員)',
+  })
+  async createPostUploadUrl(
+    @Body() dto: CreateUploadUrlDto,
     @Query('user_id') userId?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId);
-    return this.fbPostsService.uploadMedia(targetUserId, file);
+    return this.fbPostsService.createUploadUrl(targetUserId, dto.contentType);
   }
 
   @Post('posts')
