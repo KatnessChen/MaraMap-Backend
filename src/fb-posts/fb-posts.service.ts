@@ -705,8 +705,8 @@ export class FbPostsService {
   // These are the source of truth for the friendly limit messages (frontend
   // pre-checks against the same numbers) and for the claim-time HEAD backstop on
   // videos. Images top out ~7MB in the real corpus; videos are raw originals now.
-  static readonly IMAGE_MAX_BYTES = 8 * 1024 * 1024;
-  static readonly VIDEO_MAX_BYTES = 200 * 1024 * 1024;
+  static readonly IMAGE_MAX_BYTES = 15 * 1024 * 1024;
+  static readonly VIDEO_MAX_BYTES = 300 * 1024 * 1024;
 
   /**
    * 產生 presigned PUT URL，讓後台瀏覽器把圖片/影片「直接」上傳到 R2（繞過
