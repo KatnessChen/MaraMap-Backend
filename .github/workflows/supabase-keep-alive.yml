@@ -12,7 +12,7 @@ jobs:
       - name: Ping Supabase
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/participant_stats?select=id&limit=1" \
             -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
           echo "Response status: $STATUS"
           if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 400 ]; then
