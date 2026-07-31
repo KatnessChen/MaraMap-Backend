@@ -115,7 +115,11 @@ export class FbPostsController {
   ) {
     const targetUserId = this.getTargetUserId(userId);
     const canPreview = preview === 'true';
-    return this.fbPostsService.findOne(targetUserId, id, req.isAdmin || canPreview);
+    return this.fbPostsService.findOne(
+      targetUserId,
+      id,
+      req.isAdmin || canPreview,
+    );
   }
 
   @Post('posts/upload-url')
