@@ -7,6 +7,12 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Cloud Run terminates TLS and proxies every request, so without this
+  // Express (and therefore the rate limiter) sees the proxy's IP for every
+  // request instead of the real client — trust the first hop's
+  // X-Forwarded-For entry.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
   // Exclude the FB-import streaming endpoint — compression buffers chunks to
   // improve ratio, which would delay live log lines reaching the browser.
   app.use(

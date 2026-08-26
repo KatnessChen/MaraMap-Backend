@@ -36,6 +36,7 @@
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/swagger": "7",
+    "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.98.0",
     "cache-manager": "^7.2.9",
     "class-transformer": "^0.5.1",

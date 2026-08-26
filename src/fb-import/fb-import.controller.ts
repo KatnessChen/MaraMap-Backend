@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { R2Service } from '../storage/r2.service';
@@ -49,6 +50,10 @@ function closeEventStream(res: Response): void {
 @ApiTags('admin')
 @Controller('admin/fb-import')
 @UseGuards(AdminGuard)
+// Well below the global default — every route here is either an expensive
+// AI/R2 pipeline stage or touches it, and it's a single-admin tool with no
+// legitimate reason to fire these in quick succession.
+@Throttle({ default: { limit: 10, ttl: 60_000 } })
 export class FbImportController {
   constructor(
     private readonly fbImportService: FbImportService,

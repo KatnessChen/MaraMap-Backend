@@ -81,15 +81,21 @@ drafts, uploads follow a **staged claim** flow:
 3. An R2 **Object Lifecycle rule** sweeps the leftovers, auto-deleting objects
    under `tmp/` after a retention window.
 
-**Object Lifecycle rules** (set once in the Cloudflare dashboard:
-**R2 → bucket → Settings → Object lifecycle rules → Add rule → Delete
-uploaded objects**). Two prefixes accumulate throwaway objects and should
-expire by age:
+**Object Lifecycle rules** — configured and **enabled** in the Cloudflare
+dashboard (**R2 → bucket → Settings → Object lifecycle rules**). Two prefixes
+accumulate throwaway objects and expire by age:
 
-| Prefix | What's under it | Suggested "delete after" |
+| Prefix | What's under it | Delete after |
 |---|---|---|
 | `tmp/` | Manual-upload drafts never claimed into `manual/` (editor closed the tab). | 7 days |
-| `pending-imports/` | FB-import working data — uploaded zips, staged media, per-batch workspace JSON + state. A finished or cancelled batch already deletes its own big files immediately; this rule is the safety net for abandoned (never-confirmed, never-cancelled) batches. | 14 days |
+| `pending-imports/` | FB-import working data — uploaded zips, staged media, per-batch workspace JSON + state. A finished or cancelled batch already deletes its own big files immediately; this rule is the safety net for abandoned (never-confirmed, never-cancelled) batches. | 7 days |
+
+A third rule (**Delete incomplete multipart uploads**, 7 days) is also
+enabled, bucket-wide. This is the one that matters for large-file transfers
+that started but never finished (e.g. a `media_stage` retry after a dropped
+connection) — those don't show up in the normal object listing/delete APIs at
+all, so the two age-based rules above never touch them; this rule is what
+reclaims them.
 
 Rules apply by object age, so nothing in active use is ever removed (imports
 finish in minutes). Lifecycle config is bucket-level and can only be set with
@@ -98,6 +104,27 @@ an **Admin Read & Write** R2 token — the object-level upload token returns
 
 **Per-type upload limits**: images ≤ 8 MB (`jpg/png/webp/gif`), videos ≤ 64 MB
 (`mp4/mov/webm`), enforced both client-side (instant feedback) and server-side.
+
+### Rate Limiting
+
+Every route is throttled per client IP via `@nestjs/throttler` (`ThrottlerGuard`
+applied globally in `app.module.ts`), with stricter overrides on
+abuse-sensitive or expensive routes:
+
+| Scope | Limit | Why |
+|---|---|---|
+| Default (everything else — `posts`, `locations`, `stats/visit`, etc.) | 120 req / 60s per IP | Generous enough for a normal map session (several parallel reads per page load + panning) while still capping scripted abuse. |
+| `POST /auth/login` | 5 req / 60s per IP | It's a credential-guessing target; legitimate use never needs rapid retries. |
+| `admin/fb-import/*` (whole controller) | 10 req / 60s per IP | Single-admin tool — every route here triggers Gemini AI calls and/or R2 transfers, so a tight cap also guards against runaway cost from a buggy retry loop. |
+| `GET /health-check` | Unthrottled (`@SkipThrottle()`) | Polled by Cloud Run / uptime monitors, not a target. |
+
+Cloud Run terminates TLS and proxies every request, so `main.ts` sets
+`trust proxy` — without it the guard would rate-limit the proxy's IP instead
+of each real client, throttling everyone as one bucket. Limits are per
+Cloud Run instance's in-memory store (no shared Redis), which is fine at
+current scale but means a burst that lands across multiple scaled-out
+instances isn't counted together — revisit with a shared storage adapter if
+that becomes a problem.
 
 ## Environments
 
