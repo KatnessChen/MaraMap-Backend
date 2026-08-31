@@ -16,6 +16,7 @@ jest.mock('@supabase/supabase-js', () => ({
 
 describe('AuthService', () => {
   let service: AuthService;
+  let jwtService: { sign: jest.Mock; verifyAsync: jest.Mock };
 
   beforeEach(() => {
     // Clear mocks
@@ -26,18 +27,23 @@ describe('AuthService', () => {
         const config: Record<string, string> = {
           SUPABASE_URL: 'https://test.supabase.co',
           SUPABASE_SERVICE_ROLE_KEY: 'test-key',
+          ADMIN_USERNAME: 'test-admin',
+          ADMIN_PASSWORD: 'test-admin-password',
         };
         return config[key];
       }),
       get: jest.fn(() => undefined),
     } as unknown as ConfigService;
 
-    const jwtService = {
+    jwtService = {
       sign: jest.fn(() => 'mock-jwt-token'),
       verifyAsync: jest.fn(),
-    } as unknown as JwtService;
+    };
 
-    service = new AuthService(configService, jwtService);
+    service = new AuthService(
+      configService,
+      jwtService as unknown as JwtService,
+    );
   });
 
   it('should be defined', () => {
@@ -67,8 +73,8 @@ describe('AuthService', () => {
 
     it('should return JWT token and admin role for admin credentials', async () => {
       const loginDto: LoginDto = {
-        email: 'admin',
-        password: '81986369',
+        email: 'test-admin',
+        password: 'test-admin-password',
       };
 
       const result = await service.login(loginDto);
@@ -96,27 +102,21 @@ describe('AuthService', () => {
 
   describe('verifyAdminToken', () => {
     it('should return true for a valid admin token', async () => {
-      (service as any).jwtService.verifyAsync = jest
-        .fn()
-        .mockResolvedValueOnce({ role: 'admin' });
+      jwtService.verifyAsync.mockResolvedValueOnce({ role: 'admin' });
 
       const result = await service.verifyAdminToken('valid-token');
       expect(result).toBe(true);
     });
 
     it('should return false for a non-admin token', async () => {
-      (service as any).jwtService.verifyAsync = jest
-        .fn()
-        .mockResolvedValueOnce({ role: 'user' });
+      jwtService.verifyAsync.mockResolvedValueOnce({ role: 'user' });
 
       const result = await service.verifyAdminToken('user-token');
       expect(result).toBe(false);
     });
 
     it('should return false when token verification throws', async () => {
-      (service as any).jwtService.verifyAsync = jest
-        .fn()
-        .mockRejectedValueOnce(new Error('invalid token'));
+      jwtService.verifyAsync.mockRejectedValueOnce(new Error('invalid token'));
 
       const result = await service.verifyAdminToken('bad-token');
       expect(result).toBe(false);

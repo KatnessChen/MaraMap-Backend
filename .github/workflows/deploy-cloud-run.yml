@@ -59,4 +59,4 @@ jobs:
             --allow-unauthenticated \
             --timeout=3600 \
             --memory=1Gi \
-            --set-secrets="SUPABASE_URL=supabase_url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase_service_role_key:latest,GEMINI_API_KEY=gemini_api_key:latest,USER_ID=user_id:latest,R2_ACCESS_KEY_ID=r2_access_key_id:latest,R2_SECRET_ACCESS_KEY=r2_secret_access_key:latest,R2_ENDPOINT=r2_endpoint:latest,R2_BUCKET_NAME=r2_bucket_name:latest,R2_PUBLIC_URL=r2_public_url:latest"
+            --set-secrets="SUPABASE_URL=supabase_url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase_service_role_key:latest,GEMINI_API_KEY=gemini_api_key:latest,USER_ID=user_id:latest,ADMIN_USERNAME=admin_username:latest,ADMIN_PASSWORD=admin_password:latest,R2_ACCESS_KEY_ID=r2_access_key_id:latest,R2_SECRET_ACCESS_KEY=r2_secret_access_key:latest,R2_ENDPOINT=r2_endpoint:latest,R2_BUCKET_NAME=r2_bucket_name:latest,R2_PUBLIC_URL=r2_public_url:latest"

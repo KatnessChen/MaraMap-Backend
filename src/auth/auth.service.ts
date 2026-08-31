@@ -7,6 +7,8 @@ import { JwtService } from '@nestjs/jwt';
 @Injectable()
 export class AuthService {
   private client: SupabaseClient;
+  private readonly adminUsername: string;
+  private readonly adminPassword: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -17,21 +19,25 @@ export class AuthService {
       'SUPABASE_SERVICE_ROLE_KEY',
     );
     this.client = createClient(url, key);
+    // No fallback: a missing ADMIN_USERNAME/ADMIN_PASSWORD must fail startup,
+    // not silently arm a hardcoded credential.
+    this.adminUsername =
+      this.configService.getOrThrow<string>('ADMIN_USERNAME');
+    this.adminPassword =
+      this.configService.getOrThrow<string>('ADMIN_PASSWORD');
   }
 
   async login(dto: LoginDto): Promise<{ token: string; role?: string }> {
     const { email, password } = dto;
 
-    // --- Hardcoded Admin Check ---
-    const adminUsername =
-      this.configService.get<string>('ADMIN_USERNAME') || 'admin';
-    const adminPassword =
-      this.configService.get<string>('ADMIN_PASSWORD') || '81986369';
-
-    if (email === adminUsername && password === adminPassword) {
+    if (email === this.adminUsername && password === this.adminPassword) {
       console.log('🔑 Admin login detected. Generating JWT...');
       // 生成真正的 JWT Token
-      const payload = { username: adminUsername, sub: 'admin', role: 'admin' };
+      const payload = {
+        username: this.adminUsername,
+        sub: 'admin',
+        role: 'admin',
+      };
       return {
         token: this.jwtService.sign(payload),
         role: 'admin',

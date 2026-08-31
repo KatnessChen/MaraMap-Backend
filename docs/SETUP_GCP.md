@@ -131,6 +131,8 @@ secrets=(
   "supabase_service_role_key"
   "gemini_api_key"
   "user_id"
+  "admin_username"
+  "admin_password"
   "r2_access_key_id"
   "r2_secret_access_key"
   "r2_endpoint"
@@ -156,6 +158,10 @@ done
 ```
 
 > Cloud Run will mount these as environment variables via `--set-secrets` in the deploy command. The values are never stored in workflow files or the UI.
+
+> `admin_username`/`admin_password` are required, not optional: `AuthService`
+> reads them via `ConfigService.getOrThrow()` at boot, so a missing secret
+> here crashes the whole app on deploy, not just the admin login route.
 
 ---
 

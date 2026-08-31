@@ -1,9 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
-import { FbPostsController } from './fb-posts.controller';
+import { FbPostsController, RequestWithAdmin } from './fb-posts.controller';
 import { FbPostsService } from './fb-posts.service';
 import { AuthService } from '../auth/auth.service';
 import { AdminGuard } from '../auth/guards/admin.guard';
+
+/** Only `isAdmin` matters to the controller — the rest of Express's Request is never touched. */
+function mockReq(isAdmin: boolean): RequestWithAdmin {
+  return { isAdmin } as unknown as RequestWithAdmin;
+}
 
 describe('FbPostsController', () => {
   let controller: FbPostsController;
@@ -21,7 +26,10 @@ describe('FbPostsController', () => {
     getCategories: jest.fn(),
   };
 
+  const ORIGINAL_USER_ID = process.env.USER_ID;
+
   beforeEach(async () => {
+    process.env.USER_ID = 'default-user';
     const module: TestingModule = await Test.createTestingModule({
       controllers: [FbPostsController],
       providers: [
@@ -42,15 +50,19 @@ describe('FbPostsController', () => {
     service = module.get<FbPostsService>(FbPostsService);
   });
 
+  afterAll(() => {
+    process.env.USER_ID = ORIGINAL_USER_ID;
+  });
+
   it('should be defined', () => {
     expect(controller).toBeDefined();
   });
 
   describe('getPosts', () => {
-    it('should call service.findAll with correct params', async () => {
-      const mockReq = { isAdmin: false };
+    it("ignores a non-admin caller's ?user_id= override and uses the site default", async () => {
+      const req = mockReq(false);
       await controller.getPosts(
-        mockReq,
+        req,
         2,
         5,
         '馬拉松',
@@ -67,7 +79,7 @@ describe('FbPostsController', () => {
         undefined,
       );
       expect(service.findAll).toHaveBeenCalledWith(
-        'user-1',
+        'default-user',
         2,
         5,
         '馬拉松',
@@ -84,13 +96,61 @@ describe('FbPostsController', () => {
         undefined,
       );
     });
+
+    it('honors ?user_id= when the caller is an authenticated admin', async () => {
+      const req = mockReq(true);
+      await controller.getPosts(
+        req,
+        1,
+        10,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'visible',
+        'desc',
+        undefined,
+        'user-1',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(service.findAll).toHaveBeenCalledWith(
+        'user-1',
+        1,
+        10,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'visible',
+        'desc',
+        undefined,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
   });
 
   describe('getPostById', () => {
-    it('should call service.findOne', async () => {
-      const mockReq = { isAdmin: false };
-      await controller.getPostById(mockReq, 'post-123', 'user-1');
-      expect(service.findOne).toHaveBeenCalledWith('user-1', 'post-123', false);
+    it("ignores a non-admin caller's ?user_id= override", async () => {
+      const req = mockReq(false);
+      await controller.getPostById(req, 'post-123', 'user-1');
+      expect(service.findOne).toHaveBeenCalledWith(
+        'default-user',
+        'post-123',
+        false,
+      );
+    });
+
+    it('honors ?user_id= when the caller is an authenticated admin', async () => {
+      const req = mockReq(true);
+      await controller.getPostById(req, 'post-123', 'user-1');
+      expect(service.findOne).toHaveBeenCalledWith('user-1', 'post-123', true);
     });
   });
 
@@ -114,8 +174,9 @@ describe('FbPostsController', () => {
   });
 
   describe('getLocations', () => {
-    it('should call service.findLocations', async () => {
+    it("ignores a non-admin caller's ?user_id= override", async () => {
       await controller.getLocations(
+        mockReq(false),
         '馬拉松',
         undefined,
         '2026-01-01',
@@ -125,7 +186,7 @@ describe('FbPostsController', () => {
         undefined,
       );
       expect(service.findLocations).toHaveBeenCalledWith(
-        'user-1',
+        'default-user',
         '馬拉松',
         undefined,
         '2026-01-01',
@@ -134,11 +195,38 @@ describe('FbPostsController', () => {
         true,
       );
     });
+
+    it('honors ?user_id= when the caller is an authenticated admin', async () => {
+      await controller.getLocations(
+        mockReq(true),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'user-1',
+        undefined,
+      );
+      expect(service.findLocations).toHaveBeenCalledWith(
+        'user-1',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+    });
   });
 
   describe('getCategories', () => {
-    it('should call service.getCategories', async () => {
-      await controller.getCategories('user-1');
+    it("ignores a non-admin caller's ?user_id= override", async () => {
+      await controller.getCategories(mockReq(false), 'user-1');
+      expect(service.getCategories).toHaveBeenCalledWith('default-user');
+    });
+
+    it('honors ?user_id= when the caller is an authenticated admin', async () => {
+      await controller.getCategories(mockReq(true), 'user-1');
       expect(service.getCategories).toHaveBeenCalledWith('user-1');
     });
   });

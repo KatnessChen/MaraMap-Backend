@@ -12,6 +12,7 @@ import {
   Req,
   Header,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { FbPostsService } from './fb-posts.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UpdateFbPostDto } from './update-fb-post.dto';
@@ -21,14 +22,32 @@ import { FuzzySearchDto } from './fb-post.dto';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { Public } from '../auth/decorators/public.decorator';
 
+// AdminGuard stamps `isAdmin` onto the request when a valid admin JWT was
+// presented — see admin.guard.ts. Express's own Request type has no field
+// for it.
+export interface RequestWithAdmin extends Request {
+  isAdmin?: boolean;
+}
+
 @ApiTags('fb-posts')
 @Controller()
 @UseGuards(AdminGuard)
 export class FbPostsController {
   constructor(private readonly fbPostsService: FbPostsService) {}
 
-  private getTargetUserId(userId?: string): string {
-    const target = userId || process.env.USER_ID;
+  /**
+   * `?user_id=` only overrides the site's default USER_ID for an
+   * authenticated admin — an anonymous caller on a `@Public()` route passing
+   * their own `user_id` must not be able to read someone else's data. Routes
+   * without `@Public()` are already gated by AdminGuard before the handler
+   * runs, so they pass `isAdmin: true` literally rather than threading `req`
+   * through just to read a value AdminGuard already guaranteed.
+   */
+  private getTargetUserId(
+    userId: string | undefined,
+    isAdmin: boolean,
+  ): string {
+    const target = (isAdmin && userId) || process.env.USER_ID;
     if (!target) {
       throw new BadRequestException('USER_ID must be provided');
     }
@@ -39,7 +58,7 @@ export class FbPostsController {
   @Get('posts')
   @ApiOperation({ summary: '取得文章列表 (公開/管理共用)' })
   async getPosts(
-    @Req() req: any,
+    @Req() req: RequestWithAdmin,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 10,
     @Query('category') category?: string,
@@ -55,7 +74,7 @@ export class FbPostsController {
     @Query('country') country?: string,
     @Query('city') city?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.findAll(
       targetUserId,
       page,
@@ -79,19 +98,22 @@ export class FbPostsController {
   @Get('posts/search')
   @ApiOperation({ summary: '模糊搜尋文章' })
   async searchPosts(
-    @Req() req: any,
+    @Req() req: RequestWithAdmin,
     @Query() queryDto: FuzzySearchDto,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.fuzzySearch(targetUserId, queryDto, req.isAdmin);
   }
 
   @Public()
   @Get('personal-best')
   @ApiOperation({ summary: '取得個人最佳成績（各距離 + 時間線）' })
-  async getPersonalBest(@Query('user_id') userId?: string) {
-    const targetUserId = this.getTargetUserId(userId);
+  async getPersonalBest(
+    @Req() req: RequestWithAdmin,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.findPersonalBests(targetUserId);
   }
 
@@ -99,7 +121,7 @@ export class FbPostsController {
   @Post('personal-best/recompute')
   @ApiOperation({ summary: '重新計算個人最佳成績（管理員）' })
   async recomputePersonalBest(@Query('user_id') userId?: string) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     await this.fbPostsService.recomputePersonalBests(targetUserId);
     return { success: true };
   }
@@ -108,12 +130,12 @@ export class FbPostsController {
   @Get('posts/:id')
   @ApiOperation({ summary: '取得單篇文章詳情' })
   async getPostById(
-    @Req() req: any,
+    @Req() req: RequestWithAdmin,
     @Param('id') id: string,
     @Query('user_id') userId?: string,
     @Query('preview') preview?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     const canPreview = preview === 'true';
     return this.fbPostsService.findOne(
       targetUserId,
@@ -132,7 +154,7 @@ export class FbPostsController {
     @Body() dto: CreateUploadUrlDto,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.createUploadUrl(targetUserId, dto.contentType);
   }
 
@@ -143,7 +165,7 @@ export class FbPostsController {
     @Body() createDto: CreateFbPostDto,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.create(targetUserId, createDto);
   }
 
@@ -155,7 +177,7 @@ export class FbPostsController {
     @Body() updateDto: UpdateFbPostDto,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.update(targetUserId, id, updateDto);
   }
 
@@ -163,7 +185,7 @@ export class FbPostsController {
   @ApiBearerAuth('admin-token')
   @ApiOperation({ summary: '刪除文章 (僅限管理員)' })
   async deletePost(@Param('id') id: string, @Query('user_id') userId?: string) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.remove(targetUserId, id);
   }
 
@@ -172,6 +194,7 @@ export class FbPostsController {
   @Header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
   @ApiOperation({ summary: '取得地圖點位' })
   async getLocations(
+    @Req() req: RequestWithAdmin,
     @Query('category') category?: string,
     @Query('sub_category') subCategory?: string,
     @Query('start_date') startDate?: string,
@@ -180,7 +203,7 @@ export class FbPostsController {
     @Query('user_id') userId?: string,
     @Query('geoOnly') geoOnly?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.findLocations(
       targetUserId,
       category,
@@ -196,10 +219,11 @@ export class FbPostsController {
   @Get('posts/trip/:tripId')
   @ApiOperation({ summary: '取得同一趟旅行的所有貼文' })
   async getTripPosts(
+    @Req() req: RequestWithAdmin,
     @Param('tripId') tripId: string,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.findByTripId(targetUserId, tripId);
   }
 
@@ -211,7 +235,7 @@ export class FbPostsController {
     @Query('windowDays') windowDays?: string,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.getTripSuggestions(
       targetUserId,
       id,
@@ -228,7 +252,7 @@ export class FbPostsController {
     @Query('user_id') userId?: string,
   ) {
     if (!postId) throw new BadRequestException('postId is required');
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.addToTrip(targetUserId, id, postId);
   }
 
@@ -239,7 +263,7 @@ export class FbPostsController {
     @Param('id') id: string,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.removeFromTrip(targetUserId, id);
   }
 
@@ -250,7 +274,7 @@ export class FbPostsController {
     @Param('id') id: string,
     @Query('user_id') userId?: string,
   ) {
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, true);
     return this.fbPostsService.makePrimary(targetUserId, id);
   }
 
@@ -258,19 +282,23 @@ export class FbPostsController {
   @Get('locations/by-country')
   @ApiOperation({ summary: '取得特定國家的所有賽事' })
   async getByCountry(
+    @Req() req: RequestWithAdmin,
     @Query('country') country: string,
     @Query('user_id') userId?: string,
   ) {
     if (!country) throw new BadRequestException('country is required');
-    const targetUserId = this.getTargetUserId(userId);
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.findByCountry(targetUserId, country);
   }
 
   @Public()
   @Get('categories')
   @ApiOperation({ summary: '取得分類統計' })
-  async getCategories(@Query('user_id') userId?: string) {
-    const targetUserId = this.getTargetUserId(userId);
+  async getCategories(
+    @Req() req: RequestWithAdmin,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.getCategories(targetUserId);
   }
 
