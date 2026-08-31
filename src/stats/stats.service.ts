@@ -1,9 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SupabaseService } from '../supabase/supabase.service';
+import { Participant } from '../fb-posts/participant.types';
 
 const BOT_PATTERN =
   /bot|spider|crawler|crawl|slurp|fetch|scan|check|monitor|scrape|archive|feed|reader|parser|headless|python|java|ruby|curl|wget|axios|libwww|go-http|http-client|okhttp|facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|whatsapp|telegram|applebot|yandex|baidu|duckduck|semrush|ahrefs|mj12|dotbot|petalbot|gptbot|claudebot|oai-searchbot|meta-externalagent|perplexitybot/i;
+
+export interface PageView {
+  path: string;
+  human_views: number;
+  bot_views: number;
+}
+
+interface StatsAccumulator {
+  participant_name: string;
+  fm_count: number;
+  hm_count: number;
+  um_count: number;
+  calculated_fm: number;
+  calculated_hm: number;
+  calculated_um: number;
+}
 
 @Injectable()
 export class StatsService {
@@ -86,7 +103,7 @@ export class StatsService {
   async getVisits(): Promise<{
     total_human: number;
     total_bot: number;
-    pages: any[];
+    pages: PageView[];
   }> {
     const client = this.supabase.getClient();
     const { data, error } = await client
@@ -149,59 +166,64 @@ export class StatsService {
       return;
     }
 
-    const statsMap = new Map<string, any>();
+    const statsMap = new Map<string, StatsAccumulator>();
 
-    posts.forEach((post) => {
-      const participants = post.metadata?.participants;
-      const category = post.category || '';
-      if (!Array.isArray(participants)) return;
+    posts.forEach(
+      (post: {
+        metadata?: { participants?: Participant[] };
+        category?: string;
+      }) => {
+        const participants = post.metadata?.participants;
+        const category = post.category || '';
+        if (!Array.isArray(participants)) return;
 
-      participants.forEach((p) => {
-        const name = p.name;
-        if (!['Davis', 'Rose'].includes(name)) return;
+        participants.forEach((p) => {
+          const name = p.name;
+          if (!['Davis', 'Rose'].includes(name)) return;
 
-        if (!statsMap.has(name)) {
-          statsMap.set(name, {
-            participant_name: name,
-            fm_count: 0,
-            hm_count: 0,
-            um_count: 0,
-            calculated_fm: 0,
-            calculated_hm: 0,
-            calculated_um: 0,
-          });
-        }
-
-        const current = statsMap.get(name);
-        const pStats = p.stats || {};
-        const distanceType = p.distance || '';
-
-        // 1. Calculated Counts (ONLY for marathon category)
-        if (category === '馬拉松') {
-          if (distanceType.includes('超馬') || pStats.distance_km > 45) {
-            current.calculated_fm += 1;
-            current.calculated_um += 1;
-          } else if (
-            distanceType.includes('全馬') ||
-            pStats.distance_km >= 40
-          ) {
-            current.calculated_fm += 1;
-          } else if (
-            distanceType.includes('半馬') ||
-            pStats.distance_km >= 20
-          ) {
-            current.calculated_hm += 1;
+          if (!statsMap.has(name)) {
+            statsMap.set(name, {
+              participant_name: name,
+              fm_count: 0,
+              hm_count: 0,
+              um_count: 0,
+              calculated_fm: 0,
+              calculated_hm: 0,
+              calculated_um: 0,
+            });
           }
-        }
 
-        // 2. Manual/Extracted Overrides (Take the maximum found in text)
-        // Keep FM and HM overrides, skip UM overrides as previously discussed
-        if (pStats.FM_count)
-          current.fm_count = Math.max(current.fm_count, pStats.FM_count);
-        if (pStats.HM_count)
-          current.hm_count = Math.max(current.hm_count, pStats.HM_count);
-      });
-    });
+          const current = statsMap.get(name);
+          const pStats = p.stats || {};
+          const distanceType = p.distance || '';
+
+          // 1. Calculated Counts (ONLY for marathon category)
+          if (category === '馬拉松') {
+            if (distanceType.includes('超馬') || pStats.distance_km > 45) {
+              current.calculated_fm += 1;
+              current.calculated_um += 1;
+            } else if (
+              distanceType.includes('全馬') ||
+              pStats.distance_km >= 40
+            ) {
+              current.calculated_fm += 1;
+            } else if (
+              distanceType.includes('半馬') ||
+              pStats.distance_km >= 20
+            ) {
+              current.calculated_hm += 1;
+            }
+          }
+
+          // 2. Manual/Extracted Overrides (Take the maximum found in text)
+          // Keep FM and HM overrides, skip UM overrides as previously discussed
+          if (pStats.FM_count)
+            current.fm_count = Math.max(current.fm_count, pStats.FM_count);
+          if (pStats.HM_count)
+            current.hm_count = Math.max(current.hm_count, pStats.HM_count);
+        });
+      },
+    );
 
     // 3. Final Reconcile
     for (const [name, stats] of statsMap.entries()) {

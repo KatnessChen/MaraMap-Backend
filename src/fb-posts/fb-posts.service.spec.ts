@@ -130,7 +130,11 @@ describe('FbPostsService', () => {
     it.each([
       ['undefined', undefined, undefined],
       ['NaN (missing query param after transform)', NaN, NaN],
-      ['non-numeric strings', 'abc' as any, 'abc' as any],
+      [
+        'non-numeric strings',
+        'abc' as unknown as number,
+        'abc' as unknown as number,
+      ],
       ['zero', 0, 0],
       ['negative', -3, -5],
     ])(
@@ -194,7 +198,7 @@ describe('FbPostsService', () => {
     });
 
     it('claims tmp media, deletes removed R2 objects, keeps unchanged ones, and rewrites cover', async () => {
-      const tmpUri = 'https://cdn.example.com/tmp/user-123/new.png';
+      const tmpUri = 'https://cdn.example.com/manual-import/user-123/new.png';
       const permUri =
         'https://cdn.example.com/your_facebook_activity/posts/media/new.png';
       const keptUri = 'https://cdn.example.com/manual/user-123/kept.jpg';
@@ -225,9 +229,9 @@ describe('FbPostsService', () => {
         cover_image: tmpUri,
       });
 
-      // tmp item promoted out of tmp/ into the shared media prefix
+      // staged item promoted out of manual-import/ into the shared media prefix
       expect(mockR2Service.copy).toHaveBeenCalledWith(
-        'tmp/user-123/new.png',
+        'manual-import/user-123/new.png',
         'your_facebook_activity/posts/media/new.png',
       );
       // removed object deleted; kept object left alone
@@ -317,7 +321,8 @@ describe('FbPostsService', () => {
     });
 
     it('claims tmp media into the permanent path and rewrites uris + cover', async () => {
-      const tmpUri = 'https://cdn.example.com/tmp/user-123/123-abc.png';
+      const tmpUri =
+        'https://cdn.example.com/manual-import/user-123/123-abc.png';
       const permUri =
         'https://cdn.example.com/your_facebook_activity/posts/media/123-abc.png';
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
@@ -333,11 +338,11 @@ describe('FbPostsService', () => {
       });
 
       expect(mockR2Service.copy).toHaveBeenCalledWith(
-        'tmp/user-123/123-abc.png',
+        'manual-import/user-123/123-abc.png',
         'your_facebook_activity/posts/media/123-abc.png',
       );
       expect(mockR2Service.delete).toHaveBeenCalledWith(
-        'tmp/user-123/123-abc.png',
+        'manual-import/user-123/123-abc.png',
       );
       const inserted = mockSupabaseClient.insert.mock.calls[0][0];
       expect(inserted.media).toEqual([{ uri: permUri, type: 'photo' }]);
@@ -345,7 +350,7 @@ describe('FbPostsService', () => {
     });
 
     it('keeps the tmp uri when the claim copy fails (best-effort)', async () => {
-      const tmpUri = 'https://cdn.example.com/tmp/user-123/x.png';
+      const tmpUri = 'https://cdn.example.com/manual-import/user-123/x.png';
       mockR2Service.copy.mockRejectedValueOnce(new Error('R2 down'));
       mockSupabaseClient.then.mockImplementationOnce((resolve) =>
         resolve({ data: { id: 'new-2', media: [] }, error: null }),
@@ -371,7 +376,7 @@ describe('FbPostsService', () => {
       const result = await service.createUploadUrl('user-123', 'image/png');
       expect(mockR2Service.presignPut).toHaveBeenCalledTimes(1);
       const [key, contentType] = mockR2Service.presignPut.mock.calls[0];
-      expect(key).toMatch(/^tmp\/user-123\/.*\.png$/);
+      expect(key).toMatch(/^manual-import\/user-123\/.*\.png$/);
       expect(contentType).toBe('image/png');
       expect(result.key).toBe(key);
       expect(result.uploadUrl).toBe('https://r2.example.com/presigned-put');
@@ -382,7 +387,7 @@ describe('FbPostsService', () => {
     it('returns video type for a video mime', async () => {
       const result = await service.createUploadUrl('user-123', 'video/mp4');
       const [key] = mockR2Service.presignPut.mock.calls[0];
-      expect(key).toMatch(/^tmp\/user-123\/.*\.mp4$/);
+      expect(key).toMatch(/^manual-import\/user-123\/.*\.mp4$/);
       expect(result.type).toBe('video');
     });
 
@@ -455,7 +460,7 @@ describe('FbPostsService', () => {
         title: 'New race',
         event_date: '2026-07-23',
         category: '馬拉松',
-      } as any);
+      });
 
       expect(mockStatsService.refreshAfterMutation).toHaveBeenCalledTimes(1);
     });
@@ -465,7 +470,7 @@ describe('FbPostsService', () => {
         resolve({ data: { id: 'post-1', media: [] }, error: null }),
       );
 
-      await service.update('user-123', 'post-1', { title: 'Edited' } as any);
+      await service.update('user-123', 'post-1', { title: 'Edited' });
 
       expect(mockStatsService.refreshAfterMutation).toHaveBeenCalledTimes(1);
     });
@@ -490,7 +495,7 @@ describe('FbPostsService', () => {
           title: 'Doomed',
           event_date: '2026-07-23',
           category: '馬拉松',
-        } as any),
+        }),
       ).rejects.toThrow();
 
       expect(mockStatsService.refreshAfterMutation).not.toHaveBeenCalled();

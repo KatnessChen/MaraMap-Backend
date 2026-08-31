@@ -12,6 +12,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import type { Readable } from 'stream';
+import { errorMessage } from '../common/error-message';
 
 @Injectable()
 export class R2Service {
@@ -150,8 +151,12 @@ export class R2Service {
       const chunks: Buffer[] = [];
       for await (const chunk of body) chunks.push(chunk as Buffer);
       return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
-    } catch (err: any) {
-      if (err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) {
+    } catch (err: unknown) {
+      const e = err as {
+        name?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      if (e?.name === 'NoSuchKey' || e?.$metadata?.httpStatusCode === 404) {
         return null;
       }
       throw err;
@@ -258,10 +263,8 @@ export class R2Service {
       await this.client.send(
         new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
       );
-    } catch (err: any) {
-      this.logger.warn(
-        `R2 delete failed for key=${key}: ${err?.message || err}`,
-      );
+    } catch (err: unknown) {
+      this.logger.warn(`R2 delete failed for key=${key}: ${errorMessage(err)}`);
     }
   }
 }

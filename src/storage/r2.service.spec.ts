@@ -28,7 +28,9 @@ describe('R2Service', () => {
 
     service = new R2Service();
     send = jest.fn();
-    (service as any).client.send = send;
+    // R2Service constructs its own S3Client internally (no DI seam for it),
+    // so the only way to stub the wire call is to reach into the private field.
+    (service as unknown as { client: { send: jest.Mock } }).client.send = send;
     jest.clearAllMocks();
   });
 
@@ -86,7 +88,7 @@ describe('R2Service', () => {
       'https://signed.example',
     );
     const [, command, opts] = mockGetSignedUrl.mock.calls[0];
-    expect((command as any).input).toMatchObject({
+    expect((command as unknown as { input: unknown }).input).toMatchObject({
       Bucket: 'bucket',
       Key: 'up.zip',
       ContentType: 'application/zip',

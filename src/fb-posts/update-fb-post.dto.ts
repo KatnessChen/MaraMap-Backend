@@ -70,5 +70,5 @@ export class UpdateFbPostDto {
   @ApiPropertyOptional()
   @IsObject()
   @IsOptional()
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }

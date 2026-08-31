@@ -49,7 +49,7 @@ describe('StatsController', () => {
     });
 
     it('should throw BadRequestException when participant is missing', async () => {
-      await expect(controller.getStats(undefined as any)).rejects.toThrow(
+      await expect(controller.getStats(undefined)).rejects.toThrow(
         BadRequestException,
       );
       expect(mockStatsService.getParticipantStats).not.toHaveBeenCalled();

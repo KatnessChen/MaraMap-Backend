@@ -1,10 +1,19 @@
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import { ConflictException } from '@nestjs/common';
+import type { Cache } from 'cache-manager';
+import type * as unzipper from 'unzipper';
 import { FbImportService } from './fb-import.service';
 import * as r2zip from './r2-zip';
-import { parseImportSummary, ReviewPost } from './pipeline-events';
+import {
+  parseImportSummary,
+  PipelineEvent,
+  ReviewPost,
+} from './pipeline-events';
 import { execFileSync, spawn } from 'child_process';
+import { StatsService } from '../stats/stats.service';
+import { R2Service } from '../storage/r2.service';
+import { SupabaseService } from '../supabase/supabase.service';
 
 jest.mock('child_process', () => ({
   spawn: jest.fn(),
@@ -178,10 +187,10 @@ describe('FbImportService', () => {
   const mockLocalFiles = () => {
     const written = new Map<string, string>();
     jest.spyOn(fs, 'existsSync').mockReturnValue(true);
-    jest.spyOn(fs, 'writeFileSync').mockImplementation((p: any, data: any) => {
+    jest.spyOn(fs, 'writeFileSync').mockImplementation((p, data) => {
       written.set(String(p), String(data));
     });
-    jest.spyOn(fs, 'readFileSync').mockImplementation((p: any) => {
+    jest.spyOn(fs, 'readFileSync').mockImplementation((p) => {
       const s = String(p);
       if (written.has(s)) return written.get(s)!;
       if (s.endsWith('media.json')) {
@@ -203,25 +212,29 @@ describe('FbImportService', () => {
     r2 = new FakeR2();
     supabase = new FakeSupabase();
     service = new FbImportService(
-      { refreshAfterMutation } as any,
-      r2 as any,
-      supabase as any,
-      { del: cacheDel } as any,
+      { refreshAfterMutation } as unknown as StatsService,
+      r2 as unknown as R2Service,
+      supabase as unknown as SupabaseService,
+      { del: cacheDel } as unknown as Cache,
     );
 
     mockSpawn.mockImplementation(() => {
       const child = new FakeChild();
       // Auto-succeed on next tick unless the test overrides it.
       setImmediate(() => child.emit('close', 0));
-      return child as any;
+      return child as unknown as ReturnType<typeof spawn>;
     });
-    mockOpenZip.mockResolvedValue({ files: [] } as any);
+    mockOpenZip.mockResolvedValue({
+      files: [],
+    } as unknown as unzipper.CentralDirectory);
     mockExtractJson.mockResolvedValue({ fileCount: 3, warnings: [] });
     mockMediaEntries.mockReturnValue(
-      new Map([[MEDIA_URI, { uncompressedSize: 10 } as any]]),
+      new Map([
+        [MEDIA_URI, { uncompressedSize: 10 } as unknown as unzipper.File],
+      ]),
     );
     mockStreamEntry.mockResolvedValue(undefined);
-    jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined as any);
+    jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
     // mockReset (not clearAllMocks) — a leftover "trash is missing" implementation
     // would send a later test down the real fs.rmSync path.
     mockExecFileSync.mockReset();
@@ -238,7 +251,7 @@ describe('FbImportService', () => {
       mockLocalFiles();
       seedZip('batch-1');
 
-      const events: any[] = [];
+      const events: PipelineEvent[] = [];
       for await (const ev of service.runPreparePipeline('batch-1')) {
         events.push(ev);
       }
@@ -286,7 +299,7 @@ describe('FbImportService', () => {
     });
 
     it('fails cleanly when no zip was uploaded for the batch', async () => {
-      const events: any[] = [];
+      const events: PipelineEvent[] = [];
       for await (const ev of service.runPreparePipeline('batch-2')) {
         events.push(ev);
       }
@@ -306,10 +319,10 @@ describe('FbImportService', () => {
         setImmediate(() =>
           child.emit('close', callCount === failAtCall ? 1 : 0),
         );
-        return child as any;
+        return child as unknown as ReturnType<typeof spawn>;
       });
 
-      const events: any[] = [];
+      const events: PipelineEvent[] = [];
       for await (const ev of service.runPreparePipeline('batch-3')) {
         events.push(ev);
       }
@@ -342,7 +355,7 @@ describe('FbImportService', () => {
     it('applies edits, runs every stage, publishes media, and cleans up', async () => {
       seedFinalize('batch-4');
 
-      const events: any[] = [];
+      const events: PipelineEvent[] = [];
       for await (const ev of service.runFinalizePipeline('batch-4', [
         { timestamp: 1, category: '馬拉松', sub_categories: ['海外馬'] },
       ])) {
@@ -437,7 +450,7 @@ describe('FbImportService', () => {
     it('fails cleanly when every post is skipped', async () => {
       seedFinalize('batch-allskip');
 
-      const events: any[] = [];
+      const events: PipelineEvent[] = [];
       for await (const ev of service.runFinalizePipeline(
         'batch-allskip',
         [],
@@ -463,10 +476,10 @@ describe('FbImportService', () => {
       mockSpawn.mockImplementation(() => {
         const child = new FakeChild();
         setImmediate(() => child.emit('close', 1));
-        return child as any;
+        return child as unknown as ReturnType<typeof spawn>;
       });
 
-      const events: any[] = [];
+      const events: PipelineEvent[] = [];
       for await (const ev of service.runFinalizePipeline('batch-6', [])) {
         events.push(ev);
       }
@@ -514,7 +527,7 @@ describe('FbImportService', () => {
     it('leaves directories the batch never created alone', async () => {
       jest
         .spyOn(fs, 'existsSync')
-        .mockImplementation((p: any) => String(p).includes('01_ingest'));
+        .mockImplementation((p) => String(p).includes('01_ingest'));
 
       expect((await service.cancelBatch('batch-8')).removed).toEqual([
         'etl_local/01_ingest/raw/batch-8',
@@ -551,7 +564,7 @@ describe('FbImportService', () => {
         ConflictException,
       );
 
-      await run.return(undefined as any); // release the batch
+      await run.return(undefined); // release the batch
       await expect(service.cancelBatch('batch-10')).resolves.toBeDefined();
     });
   });

@@ -13,14 +13,43 @@ import { randomUUID } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { UpdateFbPostDto } from './update-fb-post.dto';
 import { CreateFbPostDto } from './create-fb-post.dto';
+import { FuzzySearchDto } from './fb-post.dto';
+import { Participant } from './participant.types';
 import { R2Service } from '../storage/r2.service';
 import { StatsService } from '../stats/stats.service';
+import { errorMessage } from '../common/error-message';
+
+/** Row shape for the `/locations` map-pin query — see findLocations' select(). */
+interface LocationRow {
+  id: string;
+  event_date: string;
+  title: string | null;
+  category: string | null;
+  sub_categories: string[] | null;
+  rep_media: {
+    lat?: number | null;
+    lng?: number | null;
+    uri?: string | null;
+    photo_count?: number | null;
+  } | null;
+  fallback_lat: number | null;
+  fallback_lng: number | null;
+  country: string | null;
+  continent: string | null;
+  city: string | null;
+}
+
+/** Only the fields geocodeLocation reads from a Nominatim search result. */
+interface NominatimResult {
+  lat: string;
+  lon: string;
+}
 
 // Permanent media live under the same R2 prefix the Facebook ETL uploads to
 // (see utils/upload-to-r2.js), so manually-added and imported media share one
 // consistent path convention. Provenance is tracked by fb_posts.source, not by
-// the storage path. tmp uploads stage under `tmp/` first (swept by the
-// R2 lifecycle rule) and are copied here on create/save.
+// the storage path. Manual uploads stage under `manual-import/` first (swept
+// by the R2 lifecycle rule) and are copied here on create/save.
 const PERMANENT_MEDIA_PREFIX = 'your_facebook_activity/posts/media';
 
 // Pagination inputs arrive off the query string and can be NaN, 0, negative or
@@ -42,9 +71,37 @@ export class FbPostsService {
   ) {}
 
   /**
+   * Shared cover-image fallback: use the stored cover_image if set, otherwise
+   * the first photo/image in media (else the first media item); a relative
+   * URI gets `publicUrl` prefixed either way. Order-independent with respect
+   * to whether `media` was already URI-rewritten by the caller — the final
+   * `startsWith('http')` guard makes re-prefixing a no-op.
+   */
+  private resolveCoverImage(
+    coverImage: unknown,
+    media: Array<{ uri?: string; type?: string }>,
+    publicUrl: string,
+  ): string | null {
+    let cover = coverImage as string | null | undefined;
+    if (!cover || (typeof cover === 'string' && cover.trim() === '')) {
+      const firstPhoto = media.find(
+        (m) => m.type === 'photo' || m.type === 'image',
+      );
+      cover = firstPhoto?.uri ?? media[0]?.uri ?? null;
+    }
+    if (cover && !cover.startsWith('http')) {
+      cover = `${publicUrl}/${cover}`;
+    }
+    return cover || null;
+  }
+
+  /**
    * 核心處理：URL 正規化與主圖自動回退邏輯
    */
-  private normalizePost(post: any, publicUrl: string) {
+  private normalizePost(
+    post: Record<string, unknown> | null,
+    publicUrl: string,
+  ): Record<string, unknown> | null {
     if (!post) return null;
     const media = Array.isArray(post.media)
       ? post.media.map((m) => ({
@@ -55,24 +112,12 @@ export class FbPostsService {
               : m.uri,
         }))
       : [];
-    let coverImage = post.cover_image;
-    if (
-      !coverImage ||
-      (typeof coverImage === 'string' && coverImage.trim() === '')
-    ) {
-      if (media.length > 0) {
-        const firstPhoto = media.find(
-          (m) => m.type === 'photo' || m.type === 'image',
-        );
-        coverImage = firstPhoto ? firstPhoto.uri : media[0].uri;
-      }
-    } else if (
-      typeof coverImage === 'string' &&
-      !coverImage.startsWith('http')
-    ) {
-      coverImage = `${publicUrl}/${coverImage}`;
-    }
-    return { ...post, media, cover_image: coverImage || null };
+    const coverImage = this.resolveCoverImage(
+      post.cover_image,
+      media,
+      publicUrl,
+    );
+    return { ...post, media, cover_image: coverImage };
   }
 
   async findAll(
@@ -152,7 +197,11 @@ export class FbPostsService {
     };
   }
 
-  async fuzzySearch(userId: string, queryDto: any, isAdmin: boolean = false) {
+  async fuzzySearch(
+    userId: string,
+    queryDto: FuzzySearchDto,
+    isAdmin: boolean = false,
+  ) {
     const { q, category, limit = 20, offset = 0 } = queryDto;
     const client = this.supabase.getClient();
     const publicUrl = process.env.R2_PUBLIC_URL || '';
@@ -264,7 +313,7 @@ export class FbPostsService {
       query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
     const { data, error } = await query;
     if (error) return [];
-    return ((data as any[]) || [])
+    return ((data as unknown as LocationRow[]) || [])
       .map((post) => {
         // rep_media is computed server-side by the fb_posts_rep_media()
         // Postgres function (see supabase/migrations) — finds the first
@@ -333,12 +382,14 @@ export class FbPostsService {
         category: post.category,
         raceName: post.metadata?.race_name || null,
         city: post.metadata?.city || null,
-        participants: (post.metadata?.participants || []).map((p: any) => ({
-          name: p.name,
-          distance: p.distance || null,
-          distanceKm: p.stats?.distance_km || null,
-          time: p.time || null,
-        })),
+        participants: (post.metadata?.participants || []).map(
+          (p: Participant) => ({
+            name: p.name,
+            distance: p.distance || null,
+            distanceKm: p.stats?.distance_km || null,
+            time: p.time || null,
+          }),
+        ),
       }));
   }
 
@@ -357,15 +408,8 @@ export class FbPostsService {
       .order('event_date', { ascending: true });
     if (error) return [];
     return (data || []).map((post) => {
-      let cover = post.cover_image;
-      if (!cover || cover.trim() === '') {
-        const media = Array.isArray(post.media) ? post.media : [];
-        const firstPhoto = media.find(
-          (m) => m.type === 'photo' || m.type === 'image',
-        );
-        cover = firstPhoto?.uri ?? media[0]?.uri ?? null;
-      }
-      if (cover && !cover.startsWith('http')) cover = `${publicUrl}/${cover}`;
+      const media = Array.isArray(post.media) ? post.media : [];
+      const cover = this.resolveCoverImage(post.cover_image, media, publicUrl);
       return {
         postId: post.id,
         title: post.title,
@@ -373,7 +417,7 @@ export class FbPostsService {
         category: post.category,
         country: post.metadata?.country || null,
         city: post.metadata?.city || null,
-        coverImage: cover || null,
+        coverImage: cover,
         isPrimary: post.id === tripId,
       };
     });
@@ -613,7 +657,7 @@ export class FbPostsService {
     const query = [city, country].filter(Boolean).join(' ').trim();
     if (!query) return { lat: null, lng: null };
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
-    let results: any[];
+    let results: NominatimResult[];
     try {
       const res = await fetch(url, {
         headers: {
@@ -656,7 +700,7 @@ export class FbPostsService {
     const client = this.supabase.getClient();
     // Promote any freshly-uploaded media out of the tmp prefix before it's
     // persisted, so the row never stores a tmp URI that lifecycle would reap.
-    const { media, cover_image } = await this.claimTmpMedia(
+    const { media, cover_image } = await this.claimManualImportMedia(
       userId,
       dto.media ?? [],
       dto.cover_image,
@@ -712,7 +756,7 @@ export class FbPostsService {
    * 產生 presigned PUT URL，讓後台瀏覽器把圖片/影片「直接」上傳到 R2（繞過
    * Cloud Run 的 32MB 請求上限）。回傳 uploadUrl 供瀏覽器 PUT，以及要寫進
    * media[].uri / cover_image 的 publicUrl。實際檔案大小無法在簽章時限制，
-   * 因此影片會在 claimTmpMedia 以 HEAD 做最終把關（前端也會先擋）。
+   * 因此影片會在 claimManualImportMedia 以 HEAD 做最終把關（前端也會先擋）。
    */
   async createUploadUrl(userId: string, contentType: string) {
     const imageExt = this.IMAGE_MIME_EXT[contentType];
@@ -732,11 +776,12 @@ export class FbPostsService {
       );
     }
 
-    // Uploads land in a tmp prefix and are "claimed" into the permanent path
-    // when a post is actually created (see claimTmpMedia). Anything never
-    // claimed (abandoned drafts) is swept by the R2 Object Lifecycle rule on
-    // `tmp/` (configured in the Cloudflare dashboard — see README).
-    const key = `tmp/${userId}/${Date.now()}-${randomUUID()}.${ext}`;
+    // Uploads land in a manual-import staging prefix and are "claimed" into
+    // the permanent path when a post is actually created (see
+    // claimManualImportMedia). Anything never claimed (abandoned drafts) is swept by
+    // the R2 Object Lifecycle rule on `manual-import/` (configured in the
+    // Cloudflare dashboard — see README).
+    const key = `manual-import/${userId}/${Date.now()}-${randomUUID()}.${ext}`;
     const uploadUrl = await this.r2.presignPut(key, contentType);
     const publicUrl = process.env.R2_PUBLIC_URL
       ? `${process.env.R2_PUBLIC_URL}/${key}`
@@ -745,13 +790,13 @@ export class FbPostsService {
   }
 
   /**
-   * Moves any media still sitting in this user's tmp prefix into the permanent
-   * `manual/<userId>/` path and rewrites their URIs. Best-effort per item: if a
-   * copy fails the original tmp URI is kept (the object still exists and the
-   * lifecycle rule will eventually reclaim it) rather than failing the whole
-   * post creation.
+   * Moves any media still sitting in this user's manual-import staging prefix
+   * into the permanent path and rewrites their URIs. Best-effort per item: if
+   * a copy fails the original staging URI is kept (the object still exists
+   * and the lifecycle rule will eventually reclaim it) rather than failing
+   * the whole post creation.
    */
-  private async claimTmpMedia(
+  private async claimManualImportMedia(
     userId: string,
     media: Array<{ uri: string; type: string }>,
     coverImage: string | null | undefined,
@@ -759,14 +804,14 @@ export class FbPostsService {
     media: Array<{ uri: string; type: string }>;
     cover_image: string | null;
   }> {
-    const tmpPrefix = `tmp/${userId}/`;
+    const stagingPrefix = `manual-import/${userId}/`;
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     const uriMap = new Map<string, string>(); // old tmp uri -> permanent uri
 
     const newMedia: Array<{ uri: string; type: string }> = [];
     for (const m of media) {
       const key = this.r2.keyFromUrl(m?.uri);
-      if (!key || !key.startsWith(tmpPrefix)) {
+      if (!key || !key.startsWith(stagingPrefix)) {
         newMedia.push(m);
         continue;
       }
@@ -778,26 +823,24 @@ export class FbPostsService {
         let size = 0;
         try {
           size = await this.r2.headSize(key);
-        } catch (err: any) {
-          this.logger.warn(
-            `headSize failed for ${key}: ${err?.message || err}`,
-          );
+        } catch (err: unknown) {
+          this.logger.warn(`headSize failed for ${key}: ${errorMessage(err)}`);
         }
         if (size > FbPostsService.VIDEO_MAX_BYTES) {
           const mb = Math.round(FbPostsService.VIDEO_MAX_BYTES / 1024 / 1024);
           throw new BadRequestException(`影片超過 ${mb}MB，無法儲存。`);
         }
       }
-      const destKey = `${PERMANENT_MEDIA_PREFIX}/${key.slice(tmpPrefix.length)}`;
+      const destKey = `${PERMANENT_MEDIA_PREFIX}/${key.slice(stagingPrefix.length)}`;
       try {
         await this.r2.copy(key, destKey);
         await this.r2.delete(key); // best-effort; lifecycle covers leftovers
         const newUri = publicUrl ? `${publicUrl}/${destKey}` : destKey;
         uriMap.set(m.uri, newUri);
         newMedia.push({ ...m, uri: newUri });
-      } catch (err: any) {
+      } catch (err: unknown) {
         this.logger.warn(
-          `claim tmp media failed for ${key}: ${err?.message || err}`,
+          `claim tmp media failed for ${key}: ${errorMessage(err)}`,
         );
         newMedia.push(m);
       }
@@ -814,7 +857,7 @@ export class FbPostsService {
     const publicUrl = process.env.R2_PUBLIC_URL || '';
     const client = this.supabase.getClient();
 
-    const payload: Record<string, any> = { ...updateDto };
+    const payload: Record<string, unknown> = { ...updateDto };
 
     // When media is part of the edit: promote any freshly-uploaded (tmp) items
     // to the permanent path, rewrite the cover if it pointed at one, and delete
@@ -823,7 +866,7 @@ export class FbPostsService {
     // for a removal. PATCHes that don't send media (e.g. hide/unhide) skip all
     // of this and leave media untouched.
     if (updateDto.media !== undefined) {
-      const claimed = await this.claimTmpMedia(
+      const claimed = await this.claimManualImportMedia(
         userId,
         updateDto.media,
         updateDto.cover_image,
@@ -841,18 +884,16 @@ export class FbPostsService {
         .single();
       const oldMedia = Array.isArray(existing?.media) ? existing.media : [];
       const newKeys = new Set(
-        payload.media
-          .map((m: any) => this.r2.keyFromUrl(m?.uri))
-          .filter(Boolean),
+        claimed.media.map((m) => this.r2.keyFromUrl(m?.uri)).filter(Boolean),
       );
       for (const m of oldMedia) {
         const key = this.r2.keyFromUrl(m?.uri);
         if (key && !newKeys.has(key)) {
           try {
             await this.r2.delete(key);
-          } catch (err: any) {
+          } catch (err: unknown) {
             this.logger.warn(
-              `R2 cleanup skipped for ${m?.uri}: ${err?.message || err}`,
+              `R2 cleanup skipped for ${m?.uri}: ${errorMessage(err)}`,
             );
           }
         }
@@ -909,7 +950,7 @@ export class FbPostsService {
   ];
 
   private classifyPbRace(
-    p: any,
+    p: Participant,
     title: string,
   ): { bucket: string; mode: 'time' | 'distance'; value: number } | null {
     const type: string = p.distance || '';
@@ -994,6 +1035,7 @@ export class FbPostsService {
       best: Omit<Milestone, 'delta'>;
       progression: Milestone[];
     };
+    type BucketOutput = Omit<Bucket, 'record'>;
 
     // participant -> bucket -> running state. Posts are ASC by date, so a single
     // forward pass yields the record progression directly: each race that beats
@@ -1050,23 +1092,12 @@ export class FbPostsService {
     }
 
     // Shape output: bucket order fixed, internal `record` stripped.
-    const result: Record<
-      string,
-      {
-        records: Record<
-          string,
-          {
-            mode: 'time' | 'distance';
-            best: Omit<Milestone, 'delta'>;
-            progression: Milestone[];
-          }
-        >;
-      }
-    > = {};
+    const result: Record<string, { records: Record<string, BucketOutput> }> =
+      {};
     for (const [name, buckets] of Object.entries(byParticipant)) {
       const ordered = this.PB_BUCKET_ORDER.filter((b) => buckets[b]);
       if (ordered.length === 0) continue;
-      const records: Record<string, any> = {};
+      const records: Record<string, BucketOutput> = {};
       for (const b of ordered) {
         records[b] = {
           mode: buckets[b].mode,
@@ -1120,9 +1151,9 @@ export class FbPostsService {
       try {
         const key = this.r2.keyFromUrl(m?.uri);
         if (key) await this.r2.delete(key);
-      } catch (err: any) {
+      } catch (err: unknown) {
         this.logger.warn(
-          `R2 cleanup skipped for ${m?.uri}: ${err?.message || err}`,
+          `R2 cleanup skipped for ${m?.uri}: ${errorMessage(err)}`,
         );
       }
     }
