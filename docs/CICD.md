@@ -70,14 +70,17 @@ This project uses GitHub Actions to automate testing and deployment. Two workflo
 
 ```
 1. Checkout code
-2. Setup Node.js 20.x
+2. Setup Node.js 24.x
 3. Install pnpm
 4. Install dependencies (with cache)
 5. Run linter (pnpm lint)
-6. Run unit + integration tests (pnpm test)
-7. Run e2e tests (pnpm test:e2e)
-8. Check coverage (pnpm test:cov)
-9. Upload coverage to Codecov (optional, non-blocking)
+6. Type-check / build (pnpm build) — nest build runs a full tsc pass; this is
+   the only step that type-checks every file regardless of test coverage.
+7. Run unit tests (pnpm test)
+8. Run e2e tests (pnpm test:e2e)
+9. Check coverage (pnpm test:cov)
+10. Publish JUnit results and upload HTML/coverage reports as build artifacts
+    (not Codecov — there's no Codecov integration in this repo)
 ```
 
 ### Result
@@ -113,35 +116,44 @@ This project uses GitHub Actions to automate testing and deployment. Two workflo
 
 ### Environment Variables Injected
 
-At deploy time, secrets are injected from GitHub Secrets:
+At deploy time, `gcloud run deploy --set-secrets` mounts these as env vars,
+each pulled from **GCP Secret Manager** by name (`SUPABASE_URL=supabase_url:latest`,
+etc. — see `.github/workflows/deploy-cloud-run.yml`). They are **not** GitHub
+Actions secrets; they must exist in Secret Manager first (see
+[SETUP_GCP.md](./SETUP_GCP.md) §6):
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GEMINI_API_KEY`
 - `USER_ID`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_ENDPOINT`
 - `R2_BUCKET_NAME`
 - `R2_PUBLIC_URL`
+
+`AuthService` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` via
+`ConfigService.getOrThrow()` — if either secret is missing from a Cloud Run
+revision's `--set-secrets`, the whole app fails to boot, not just `/auth/login`.
 
 ---
 
 ## GitHub Secrets Required
 
-Set these in your GitHub repository settings (`Settings > Secrets and variables > Actions`):
+Only two values are true **GitHub Actions** repo secrets (`Settings > Secrets
+and variables > Actions`) — everything the app itself needs lives in GCP
+Secret Manager instead, referenced by name in the deploy step:
 
 - `GCP_PROJECT_ID`
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `GEMINI_API_KEY`
-- `USER_ID`
-- `R2_ACCESS_KEY_ID`
-- `R2_SECRET_ACCESS_KEY`
-- `R2_ENDPOINT`
-- `R2_BUCKET_NAME`
-- `R2_PUBLIC_URL`
+
+The application secrets Cloud Run mounts (`supabase_url`,
+`supabase_service_role_key`, `gemini_api_key`, `user_id`, `admin_username`,
+`admin_password`, `r2_access_key_id`, `r2_secret_access_key`, `r2_endpoint`,
+`r2_bucket_name`, `r2_public_url`) are created directly in **GCP Secret
+Manager**, not in GitHub — see [SETUP_GCP.md](./SETUP_GCP.md) §6.
 
 ---
 

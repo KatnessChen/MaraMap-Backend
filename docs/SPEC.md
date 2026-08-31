@@ -46,9 +46,15 @@ All non-`@Public()` routes require `Authorization: Bearer <token>` from `/auth/l
 
 ---
 
-## 3. Data Ingestion Workflow (`etl/`)
+## 3. Data Ingestion Workflow (`etl_local/`)
 
-Numbered pipeline stages, run manually as local scripts against the raw Facebook export — there is no upload API:
+Numbered pipeline stages. As of 2026-07-24 these run two ways, not one: an
+admin can upload a Facebook export zip through `/admin/fb-import` and the
+backend runs the whole thing server-side (see `etl_cloud/README.md` for that
+orchestration), or a developer can still invoke any stage by hand
+(`BATCH=<folder> node etl_local/...`) for local debugging. Either way it is
+the same script files below — the cloud path `spawn()`s them as child
+processes rather than reimplementing them:
 
 1. **`01_ingest/ingest-fb-data.js`** — parses raw Facebook JSON/album exports, fixes mojibake, extracts text + media metadata (incl. `rerun-albums.js` for FB "Download Your Information" album-only re-imports).
 2. **`02_classify/ai-classify.js`** — Gemini-based classification into 馬拉松/旅遊/登山 + tags.

@@ -8,16 +8,35 @@ MaraMap connects content from social media (like Facebook and Instagram) to geog
 
 The backend handles:
 - **Content API** — delivers processed posts and map data to the web and mobile frontends.
-- **Data Ingestion** — handled via local processing scripts that extract and classify Facebook export data.
+- **Data Ingestion** — an admin uploads a Facebook export through the admin UI, and the backend runs the classification/import pipeline itself, server-side.
 
 ## Data Processing Workflow
 
-Instead of uploading zip files via API, we use local scripts for efficiency and cost control:
+An admin uploads a Facebook "Download Your Information" export zip through
+`/admin/fb-import`; the backend runs the whole pipeline — nothing is run by
+hand on a laptop anymore:
 
-1. **Extraction**: `node scripts/extract-fb-data.js` - Extracts text and media (with GPS) from Facebook JSON exports.
-2. **Classification**: `node scripts/ai-classify.js` - Uses Gemini AI (2.5 Flash) to categorize posts (marathon, travel, etc.) and generate tags.
-3. **Upload Media**: `node scripts/upload-to-r2.js` - Uploads images and videos to Cloudflare R2 in parallel, updates database records with CDN URLs.
-4. **Import**: `node scripts/import-to-supabase.js` - Pushes the final structured data into Supabase `fb_posts` table.
+1. **Upload** — the browser PUTs the zip straight to Cloudflare R2 via a
+   presigned URL (`POST /admin/fb-import/upload-url`), bypassing Cloud Run's
+   32MB request limit.
+2. **Prepare** (`POST /admin/fb-import/:batch/prepare`, streamed as NDJSON) —
+   unzips the JSON entries, stages the referenced media into R2, then runs
+   ingest and Gemini classification, and pauses for review.
+3. **Review** — the admin corrects any miscategorized posts and can skip
+   individual ones before confirming.
+4. **Finalize** (`POST /admin/fb-import/:batch/confirm`) — runs the
+   remaining analyze/format/merge/import stages, publishes staged media to
+   its permanent R2 path, assigns trips, and fills in fallback geocoding.
+
+Every stage is one of the numbered scripts in `etl_local/` (`01_ingest` →
+`08_geocode`) — the backend doesn't reimplement them, it runs the same files
+as child processes and uses R2 (instead of local disk) to carry each stage's
+output to the next, since a batch's prepare and finalize requests can land on
+different Cloud Run instances. There is one copy of the pipeline logic, not
+a local one and a cloud one: a developer can still invoke any stage directly
+(`BATCH=<folder> node etl_local/...`) for local debugging, but that's a
+debugging path now, not how imports actually happen. Full internals:
+[`etl_cloud/README.md`](./etl_cloud/README.md).
 
 ## Core Endpoints
 
@@ -35,17 +54,17 @@ $ pnpm install
 
 # Start development server
 $ pnpm start:dev
-
-# Run Data Import (Requires GEMINI_API_KEY and SUPABASE keys in .env)
-$ node scripts/extract-fb-data.js
-$ node scripts/ai-classify.js
-$ node scripts/upload-to-r2.js       # Upload images/videos to Cloudflare R2
-$ node scripts/import-to-supabase.js
 ```
+
+Data import happens through the admin UI (`/admin/fb-import`) once the
+server's running — see [Data Processing Workflow](#data-processing-workflow)
+above. There's no local import command to run.
 
 ## How It Works
 
-1. **Local Scripts** process the raw Facebook export folder.
+1. **The admin UI** uploads a Facebook export and triggers the pipeline on
+   the backend — the same numbered scripts in `etl_local/`, now run
+   server-side instead of on a laptop.
 2. **Gemini AI** performs high-quality classification and tagging.
 3. **Cloudflare R2** stores all media assets (images, videos) with public CDN URLs.
 4. **Supabase** stores the structured post data, including media references and geographic coordinates.
@@ -53,7 +72,14 @@ $ node scripts/import-to-supabase.js
 
 ### Media Upload to Cloudflare R2
 
-The `upload-to-r2.js` script handles media migration:
+During the admin-UI import, media publishing is handled in-process by
+`fb-import.service.ts`'s `publishMedia` step — a server-side R2 copy from
+staging to the permanent path plus a DB URI rewrite, no separate script
+involved.
+
+`utils/upload-to-r2.js` still exists but is no longer part of that flow — the
+only remaining caller is `etl_local/rerun-albums.js`, the manual recovery
+path for FB "Download Your Information" album-only re-imports:
 
 - **Parallel Uploads**: Uploads up to 20 files simultaneously for speed
 - **Deduplication**: Caches local file URIs to skip redundant uploads
@@ -66,20 +92,15 @@ The `upload-to-r2.js` script handles media migration:
 - `R2_BUCKET_NAME`: Target bucket name in R2
 - `R2_PUBLIC_URL`: Public CDN URL for the bucket
 
-### Admin Manual Uploads & tmp Lifecycle
+### Admin Manual Uploads & manual-import Lifecycle
 
-Besides the bulk ETL path above, the admin "new post" screen (`/admin/new`)
-lets an editor upload images/videos directly through the API
-(`POST /api/v1/posts/upload-media`). To avoid orphaned files from abandoned
-drafts, uploads follow a **staged claim** flow:
+Besides the bulk ETL path above, the admin "new post" (`/admin/new`) and "edit post" (`/admin/edit/[id]`) screens let an editor upload images/videos directly through the API (`POST /api/v1/posts/upload-url`, both screens go through the same `MediaManager` component). This is the **only** producer and consumer of this staging prefix — the FB bulk-import pipeline is a fully separate flow(`pending-imports/`, see above) and never touches it. To avoid
+orphaned files from abandoned drafts, uploads follow a **staged claim** flow:
 
-1. Uploads land in a **tmp prefix**: `tmp/<userId>/…`.
-2. When the post is actually created, the backend **claims** them — copies each
-   into the permanent `manual/<userId>/…` path, deletes the tmp copy, and
-   rewrites the stored URIs. Anything never claimed (editor closed the tab) is
-   left in tmp.
+1. Uploads land in a **manual-import prefix**: `manual-import/<userId>/…`.
+2. When the post is created (`POST /posts`) or saved with a `media` field present (`PATCH /posts/:id`), the backend **claims** them — copies each into the shared permanent path (`your_facebook_activity/posts/media/…`, the same one the FB ETL writes to), best-effort deletes the staging copy, and rewrites the stored URIs. Anything never claimed (editor uploaded then closed the tab without saving) is left in `manual-import/`.
 3. An R2 **Object Lifecycle rule** sweeps the leftovers, auto-deleting objects
-   under `tmp/` after a retention window.
+   under `manual-import/` after a retention window.
 
 **Object Lifecycle rules** — configured and **enabled** in the Cloudflare
 dashboard (**R2 → bucket → Settings → Object lifecycle rules**). Two prefixes
@@ -87,8 +108,19 @@ accumulate throwaway objects and expire by age:
 
 | Prefix | What's under it | Delete after |
 |---|---|---|
-| `tmp/` | Manual-upload drafts never claimed into `manual/` (editor closed the tab). | 7 days |
+| `manual-import/` | Manual-upload drafts never claimed into the permanent path (editor closed the tab, or a draft sat unsaved past the retention window — see the claim-failure caveat below). | 7 days |
 | `pending-imports/` | FB-import working data — uploaded zips, staged media, per-batch workspace JSON + state. A finished or cancelled batch already deletes its own big files immediately; this rule is the safety net for abandoned (never-confirmed, never-cancelled) batches. | 7 days |
+
+**Claim-failure caveat**: the claim step is best-effort — if the R2 copy
+throws (including "object no longer exists" because a draft sat in
+`manual-import/` past the 7-day window before finally being saved), the post
+is still created/saved successfully, just with the original (now-expiring or
+already-expired) staging URI left in `media`, and only a server log records
+it. Nothing currently surfaces this to the admin or re-checks it later — a
+published post can end up with a dead media link with no visible error. Seen
+once in production already (media entry silently orphaned this way, fixed
+manually). Worth hardening — see the discussion below on where the failure
+window actually is.
 
 A third rule (**Delete incomplete multipart uploads**, 7 days) is also
 enabled, bucket-wide. This is the one that matters for large-file transfers
@@ -126,13 +158,33 @@ current scale but means a burst that lands across multiple scaled-out
 instances isn't counted together — revisit with a shared storage adapter if
 that becomes a problem.
 
-## Environments
+## Architecture Notes
 
-## Infrastructure
+Corrective facts for anyone — human or AI agent — carrying assumptions in
+from a typical NestJS + Supabase starter:
 
-- **Region**: Taiwan (`asia-east1`) for optimal low-latency service to end users in Asia.
-- **Platform**: GCP Cloud Run + Supabase + Cloudflare R2.
-
+- **Storage is Cloudflare R2** (S3-compatible, via `@aws-sdk/client-s3`), not
+  Supabase Storage. Public URLs are served from `R2_PUBLIC_URL` (a custom CDN
+  domain). Browsers upload directly to R2 via presigned PUT URLs
+  (`R2Service.presignPut`) to bypass Cloud Run's 32MB request-body limit.
+- **The database is one content table, `fb_posts`** — there is no `users` or
+  `posts` table, and no PostGIS: geo data is plain `lat`/`lng` floats inside
+  `media`/`metadata` JSONB, not a `GEOGRAPHY` column. Full schema:
+  [docs/SPEC.md](./docs/SPEC.md) §4.
+- **Auth is two paths behind one endpoint.** `POST /auth/login` checks
+  `email`/`password` against the `ADMIN_USERNAME`/`ADMIN_PASSWORD` env vars
+  first (not Supabase Auth) and returns a self-issued JWT if they match;
+  only then does it fall back to Supabase Auth sign-in, though nothing in
+  this codebase currently exercises a non-admin role. `AdminGuard` verifies
+  that JWT on every non-`@Public()` route.
+- **The Supabase client uses the service-role key everywhere** — Row Level
+  Security is bypassed. Authorization is enforced entirely in application
+  code (`AdminGuard` plus explicit `is_hidden`/`user_id` filters in
+  `fb-posts.service.ts`), not by Postgres RLS policies.
+- **Deployment is two Cloud Run regions, driven by branch**, not a
+  `dev`/`prod` label pair: `develop` → `northamerica-northeast1` (Montreal);
+  `main` → `asia-east1` (Taiwan, production). See
+  [docs/SETUP_GCP.md](./docs/SETUP_GCP.md).
 
 ## For Developers
 

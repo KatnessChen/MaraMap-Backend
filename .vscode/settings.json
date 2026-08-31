@@ -6,12 +6,6 @@
     "northamerica",
     "SUPABASE"
   ],
-  "github.copilot.chat.codeGeneration.instructions": [
-    { "file": "${workspaceFolder}/.github/copilot-instructions.md" }
-  ],
-  "github.copilot.chat.testGeneration.instructions": [
-    { "file": "${workspaceFolder}/.github/copilot-test-instructions.md" }
-  ],
   "chat.tools.terminal.autoApprove": {
     "git commit": true
   }
