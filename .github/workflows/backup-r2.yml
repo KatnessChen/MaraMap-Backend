@@ -1,7 +1,7 @@
 name: Backup R2 media (off-Cloudflare)
 
 # R2 has no native object versioning and no cross-bucket replication (both are
-# still open feature requests as of 2026), so the 11 GB of Facebook-export media
+# still open feature requests as of 2026), so the ~28 GB of Facebook-export media
 # has exactly one copy today. Two of our own code paths can destroy originals
 # irrecoverably:
 #   - fb-posts.service.ts remove()/update() call r2.delete() on a post's media.
@@ -11,20 +11,38 @@ name: Backup R2 media (off-Cloudflare)
 # Cloudflare — a copy in another R2 bucket dies with the same account/credentials
 # and is not a backup.
 #
-# Destination is Backblaze B2 (S3-compatible). R2 egress is free, so pulling the
-# whole bucket out costs nothing; B2 storage is ~$6/TB/mo → ~$0.07/mo for 11 GB.
+# Destination is the owner's personal Google Drive (5 TB Google One). R2 egress
+# is free and the Drive quota is already paid for, so this costs nothing.
+#
+# WHY OAUTH AND NOT A SERVICE ACCOUNT: a Google service account has no storage
+# quota of its own on consumer Drive — it cannot write into a personal 5 TB
+# plan at all. That path only works with Workspace + a Shared Drive. So this
+# authenticates as the user via a stored OAuth refresh token.
+#
+# !! THE TOKEN TRAP !! If the OAuth consent screen in Google Cloud Console is
+# left in "Testing" publishing status, Google expires the refresh token after
+# 7 DAYS — which lands squarely between two runs of a weekly backup. The
+# consent screen MUST be set to "In production" or this breaks every week.
+#
+# Scope is drive.file, not drive: rclone can only see files it created itself,
+# so a bug here cannot touch the rest of the Drive. The consequence is that the
+# destination folder must be created BY rclone — a folder made by hand in the
+# Drive web UI is invisible under this scope. Hence GDRIVE_FOLDER is a plain
+# path that the first run creates.
 #
 # Required secrets:
 #   R2_ENDPOINT / R2_BUCKET_NAME / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 #     — the SOURCE (existing secrets, read scope is enough).
-#   B2_ENDPOINT       e.g. https://s3.us-west-004.backblazeb2.com
-#   B2_BUCKET_NAME    destination bucket
-#   B2_KEY_ID / B2_APP_KEY  — a B2 application key scoped to that bucket.
+#   GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET
+#     — from a "Desktop app" OAuth client in Google Cloud Console.
+#   GDRIVE_TOKEN
+#     — the full JSON blob ({"access_token":...,"refresh_token":...}) produced
+#       by running `rclone config` locally; copy the `token = ` line's value.
 
 on:
   schedule:
-    # Weekly, not nightly: media is append-mostly and 11 GB of HEAD requests
-    # every night is wasteful. Sunday 09:00 UTC = 05:00 Ottawa (EDT).
+    # Weekly, not nightly: media is append-mostly and ~15k HEAD requests every
+    # night is wasteful. Sunday 09:00 UTC = 05:00 Ottawa (EDT).
     - cron: '0 9 * * 0'
   workflow_dispatch:
 
@@ -32,6 +50,26 @@ concurrency:
   # A big sync can outrun the weekly tick; never let two overlap.
   group: backup-r2
   cancel-in-progress: false
+
+env:
+  # rclone reads remotes straight from RCLONE_CONFIG_<REMOTE>_<KEY>, so no
+  # rclone.conf is ever written to disk. This matters for GDRIVE_TOKEN: it is
+  # JSON full of quotes and braces, and interpolating it into a heredoc risks
+  # the shell mangling it. Env vars pass it through byte-for-byte.
+  RCLONE_CONFIG_R2_TYPE: s3
+  RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+  RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+  RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+  RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+
+  RCLONE_CONFIG_GDRIVE_TYPE: drive
+  RCLONE_CONFIG_GDRIVE_SCOPE: drive.file
+  RCLONE_CONFIG_GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+  RCLONE_CONFIG_GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+  RCLONE_CONFIG_GDRIVE_TOKEN: ${{ secrets.GDRIVE_TOKEN }}
+
+  R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+  GDRIVE_FOLDER: MaraMap-R2-Backup
 
 jobs:
   mirror:
@@ -46,69 +84,59 @@ jobs:
           sudo -v && curl -fsSL https://rclone.org/install.sh | sudo bash
           rclone version
 
-      - name: Configure remotes
-        env:
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          B2_ENDPOINT: ${{ secrets.B2_ENDPOINT }}
-          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
-          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+      - name: Check every required secret is present
         run: |
-          for v in R2_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY \
-                   B2_ENDPOINT B2_KEY_ID B2_APP_KEY; do
+          # Fail loudly here rather than let rclone fail later with a confusing
+          # error about an empty bucket path or a malformed token.
+          for v in RCLONE_CONFIG_R2_ACCESS_KEY_ID RCLONE_CONFIG_R2_SECRET_ACCESS_KEY \
+                   RCLONE_CONFIG_R2_ENDPOINT R2_BUCKET_NAME \
+                   RCLONE_CONFIG_GDRIVE_CLIENT_ID RCLONE_CONFIG_GDRIVE_CLIENT_SECRET \
+                   RCLONE_CONFIG_GDRIVE_TOKEN; do
             if [ -z "${!v}" ]; then
-              echo "::error::Secret $v is not set. See this workflow's header for the full list."
+              echo "::error::Secret for $v is not set. See this workflow's header for the full list."
               exit 1
             fi
           done
-          mkdir -p ~/.config/rclone
-          # Both are the generic S3 provider; provider=Other keeps rclone from
-          # applying AWS-specific quirks to R2/B2.
-          cat > ~/.config/rclone/rclone.conf <<EOF
-          [r2]
-          type = s3
-          provider = Cloudflare
-          access_key_id = ${R2_ACCESS_KEY_ID}
-          secret_access_key = ${R2_SECRET_ACCESS_KEY}
-          endpoint = ${R2_ENDPOINT}
 
-          [b2]
-          type = s3
-          provider = Other
-          access_key_id = ${B2_KEY_ID}
-          secret_access_key = ${B2_APP_KEY}
-          endpoint = ${B2_ENDPOINT}
-          EOF
+      - name: Confirm the Drive token still works
+        run: |
+          # A refresh token that Google has expired (see THE TOKEN TRAP above)
+          # fails here in seconds, with a clear message, instead of dying
+          # partway through a 28 GB transfer.
+          if ! rclone lsd "gdrive:" --max-depth 1 >/dev/null 2>token-err.txt; then
+            echo "::error::Google Drive auth failed — the refresh token is likely expired or revoked. Re-run 'rclone config' locally and update GDRIVE_TOKEN."
+            sed 's/[A-Za-z0-9_-]\{20,\}/[redacted]/g' token-err.txt
+            exit 1
+          fi
+          echo "✅ Drive token accepted."
 
-      - name: Mirror R2 → B2
-        env:
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+      - name: Mirror R2 → Google Drive
         run: |
           STAMP=$(date -u +%Y-%m-%d)
           # --backup-dir is the whole point: plain `sync` deletes from the
           # destination anything deleted at the source, so a wrongly-deleted post
           # would propagate into the backup on the next run. Instead, objects the
-          # source no longer has are MOVED into _deleted/<date>/ on B2 — a
-          # recoverable tombstone, not a destructive mirror.
-          rclone sync "r2:${R2_BUCKET_NAME}" "b2:${B2_BUCKET_NAME}/current" \
-            --backup-dir "b2:${B2_BUCKET_NAME}/_deleted/${STAMP}" \
-            --fast-list \
-            --transfers 16 \
-            --checkers 32 \
+          # source no longer has are MOVED into _deleted/<date>/ — a recoverable
+          # tombstone, not a destructive mirror.
+          #
+          # Concurrency is far lower than the S3 defaults on purpose: the Drive
+          # API rate-limits per user and answers an aggressive sync with 403
+          # userRateLimitExceeded. --tpslimit caps API calls/sec directly.
+          rclone sync "r2:${R2_BUCKET_NAME}" "gdrive:${GDRIVE_FOLDER}/current" \
+            --backup-dir "gdrive:${GDRIVE_FOLDER}/_deleted/${STAMP}" \
+            --transfers 4 \
+            --checkers 8 \
+            --tpslimit 10 \
+            --drive-chunk-size 64M \
             --retries 3 \
             --stats 30s \
             --stats-one-line \
             --exclude "tmp/**"   # ephemeral unclaimed uploads; no point backing up
 
       - name: Verify the mirror is non-empty and consistent
-        env:
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
         run: |
           SRC=$(rclone size "r2:${R2_BUCKET_NAME}" --exclude "tmp/**" --json)
-          DST=$(rclone size "b2:${B2_BUCKET_NAME}/current" --json)
+          DST=$(rclone size "gdrive:${GDRIVE_FOLDER}/current" --json)
           SRC_N=$(echo "$SRC" | python3 -c "import sys,json;print(json.load(sys.stdin)['count'])")
           DST_N=$(echo "$DST" | python3 -c "import sys,json;print(json.load(sys.stdin)['count'])")
           echo "source objects: $SRC_N | mirror objects: $DST_N"
@@ -125,7 +153,7 @@ jobs:
             echo "::error::Object counts differ by ${DIFF} (>1%). Sync likely did not complete."
             exit 1
           fi
-          echo "✅ Mirror verified: ${DST_N} objects on B2."
+          echo "✅ Mirror verified: ${DST_N} objects on Google Drive."
 
       - name: Report failure as an issue
         if: failure()
@@ -151,9 +179,9 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo,
               title: `🔴 R2 media backup failed — ${today}`,
               body: [
-                `## R2 → B2 mirror failure — ${today}`,
+                `## R2 → Google Drive mirror failure — ${today}`,
                 '',
-                'The 11 GB of Facebook media has no other copy when this fails.',
+                'The ~28 GB of Facebook media has no other copy when this fails.',
                 '',
                 `[View run](${runUrl})`,
               ].join('\n'),
