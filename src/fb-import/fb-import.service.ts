@@ -8,6 +8,7 @@ import * as path from 'path';
 import { R2Service } from '../storage/r2.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { StatsService } from '../stats/stats.service';
+import { TranslationsService } from '../translations/translations.service';
 import {
   extractJsonEntries,
   mediaEntries,
@@ -131,6 +132,7 @@ export class FbImportService {
     private readonly stats: StatsService,
     private readonly r2: R2Service,
     private readonly supabase: SupabaseService,
+    private readonly translations: TranslationsService,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
   ) {}
 
@@ -351,6 +353,21 @@ export class FbImportService {
       // otherwise serve stale data until its (now day-long) TTL expired. Clear
       // it here so an import shows up immediately. Best-effort, per-instance.
       await this.cache.del(`pb:${process.env.USER_ID}`).catch(() => undefined);
+      // Titles are cheap (~27 chars average across the corpus) so they stay
+      // eager even for batch-imported posts — every English list/map card
+      // needs one. Content translation staying lazy-on-read (see
+      // TranslationsService) is what actually keeps this pipeline's Gemini
+      // cost bounded, not deferring titles too. Same `finally` reasoning as
+      // above: run even if a later stage failed, since 06_import already
+      // committed rows. In-process call, not a spawned stage —
+      // TranslationsService already lives in this Nest app.
+      await this.translations
+        .translateMissingTitles(process.env.USER_ID || '')
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `translateMissingTitles after import failed: ${err}`,
+          ),
+        );
     }
   }
 

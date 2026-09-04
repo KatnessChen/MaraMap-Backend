@@ -14,6 +14,7 @@ import { execFileSync, spawn } from 'child_process';
 import { StatsService } from '../stats/stats.service';
 import { R2Service } from '../storage/r2.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { TranslationsService } from '../translations/translations.service';
 
 jest.mock('child_process', () => ({
   spawn: jest.fn(),
@@ -215,6 +216,9 @@ describe('FbImportService', () => {
       { refreshAfterMutation } as unknown as StatsService,
       r2 as unknown as R2Service,
       supabase as unknown as SupabaseService,
+      {
+        translateMissingTitles: jest.fn().mockResolvedValue(0),
+      } as unknown as TranslationsService,
       { del: cacheDel } as unknown as Cache,
     );
 

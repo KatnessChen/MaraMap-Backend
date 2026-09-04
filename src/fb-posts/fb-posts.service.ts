@@ -17,7 +17,23 @@ import { FuzzySearchDto } from './fb-post.dto';
 import { Participant } from './participant.types';
 import { R2Service } from '../storage/r2.service';
 import { StatsService } from '../stats/stats.service';
+import { LocationTranslationsService } from '../location-translations/location-translations.service';
+import { TranslationsService } from '../translations/translations.service';
 import { errorMessage } from '../common/error-message';
+
+/** Taiwan county display strips its 市/縣 suffix before matching a city map
+ *  key — mirrors MaraMap-Frontend's formatCityName. Applied here too since
+ *  city_translations' zh keys are seeded suffix-free (e.g. "台北"). */
+const TW_COUNTRY_NAMES = new Set(['台灣', '台 灣', '臺灣', 'Taiwan']);
+function stripTaiwanSuffix(
+  city: string,
+  country: string | null | undefined,
+): string {
+  const trimmed = city.trim();
+  if (!trimmed || !country || !TW_COUNTRY_NAMES.has(country.trim()))
+    return trimmed;
+  return trimmed.replace(/[市縣]$/u, '') || trimmed;
+}
 
 /** Row shape for the `/locations` map-pin query — see findLocations' select(). */
 interface LocationRow {
@@ -68,7 +84,24 @@ export class FbPostsService {
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
     private readonly r2: R2Service,
     private readonly stats: StatsService,
+    private readonly locationTranslations: LocationTranslationsService,
+    private readonly translations: TranslationsService,
   ) {}
+
+  /** Fetched once per request alongside countryMap/cityMap — see normalizePost(). */
+  private async getGlossaryMaps() {
+    const [raceMap, mountainMap] = await Promise.all([
+      this.translations.getRaceMap(),
+      this.translations.getMountainMap(),
+    ]);
+    return { raceMap, mountainMap };
+  }
+
+  /** Batched title_en lookup for list endpoints — thin wrapper so callers in
+   *  this file don't need to know TranslationsService's shape. */
+  private getTitleEnMap(postIds: string[]): Promise<Record<string, string>> {
+    return this.translations.getTitleMap(postIds);
+  }
 
   /**
    * Shared cover-image fallback: use the stored cover_image if set, otherwise
@@ -97,10 +130,21 @@ export class FbPostsService {
 
   /**
    * 核心處理：URL 正規化與主圖自動回退邏輯
+   *
+   * `countryMap`/`cityMap` are fetched once by the caller (findOne/findAll)
+   * rather than inside this method, so mapping N posts costs one extra
+   * query total instead of N — see location-translations.service.ts.
    */
   private normalizePost(
     post: Record<string, unknown> | null,
     publicUrl: string,
+    countryMap: Record<string, string>,
+    cityMap: Record<string, Record<string, string>>,
+    glossaryMaps?: {
+      raceMap: Record<string, string>;
+      mountainMap: Record<string, string>;
+    },
+    titleEn?: string,
   ): Record<string, unknown> | null {
     if (!post) return null;
     const media = Array.isArray(post.media)
@@ -117,7 +161,64 @@ export class FbPostsService {
       media,
       publicUrl,
     );
-    return { ...post, media, cover_image: coverImage };
+    // `metadata.country_en`/`city_en` ride along with the single-post fetch
+    // so the English log detail page doesn't need a second round trip —
+    // every list endpoint (findLocations) already computes these the same
+    // way.
+    const metadata = post.metadata as Record<string, unknown> | null;
+    const metadataWithTranslations = metadata
+      ? {
+          ...metadata,
+          country_en: this.countryEn(
+            metadata.country as string | undefined,
+            countryMap,
+          ),
+          city_en: this.cityEn(
+            metadata.city as string | undefined,
+            metadata.country as string | undefined,
+            cityMap,
+          ),
+          race_name_en: glossaryMaps
+            ? this.translations.raceEn(
+                metadata.race_name as string | undefined,
+                glossaryMaps.raceMap,
+              )
+            : null,
+          mountain_name_en: glossaryMaps
+            ? this.translations.mountainEn(
+                metadata.mountain_name as string | undefined,
+                glossaryMaps.mountainMap,
+              )
+            : null,
+        }
+      : metadata;
+    return {
+      ...post,
+      media,
+      cover_image: coverImage,
+      metadata: metadataWithTranslations,
+      title_en: titleEn ?? null,
+    };
+  }
+
+  private countryEn(
+    zh: string | null | undefined,
+    countryMap: Record<string, string>,
+  ): string | null {
+    if (!zh) return null;
+    const trimmed = zh.trim();
+    return countryMap[trimmed] || trimmed;
+  }
+
+  private cityEn(
+    city: string | null | undefined,
+    country: string | null | undefined,
+    cityMap: Record<string, Record<string, string>>,
+  ): string | null {
+    if (!city) return null;
+    const formatted = stripTaiwanSuffix(city, country);
+    if (!formatted || !country) return formatted || null;
+    return cityMap[country.trim()]?.[formatted] ?? formatted;
   }
 
   async findAll(
@@ -183,8 +284,21 @@ export class FbPostsService {
     const { data, count, error } = await query.range(offset, offset + l - 1);
     if (error) throw new InternalServerErrorException(error.message);
     const publicUrl = process.env.R2_PUBLIC_URL || '';
+    const [countryMap, cityMap, glossaryMaps, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCountryMap(),
+      this.locationTranslations.getCityMap(),
+      this.getGlossaryMaps(),
+      this.getTitleEnMap((data || []).map((p) => p.id)),
+    ]);
     const normalizedData = (data || []).map((post) =>
-      this.normalizePost(post, publicUrl),
+      this.normalizePost(
+        post,
+        publicUrl,
+        countryMap,
+        cityMap,
+        glossaryMaps,
+        titleEnMap[post.id],
+      ),
     );
     return {
       data: normalizedData,
@@ -219,68 +333,26 @@ export class FbPostsService {
       offset + limit - 1,
     );
     if (error) throw new InternalServerErrorException(error.message);
+    const [countryMap, cityMap, glossaryMaps, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCountryMap(),
+      this.locationTranslations.getCityMap(),
+      this.getGlossaryMaps(),
+      this.getTitleEnMap((data || []).map((p) => p.id)),
+    ]);
     return {
-      data: (data || []).map((post) => this.normalizePost(post, publicUrl)),
+      data: (data || []).map((post) =>
+        this.normalizePost(
+          post,
+          publicUrl,
+          countryMap,
+          cityMap,
+          glossaryMaps,
+          titleEnMap[post.id],
+        ),
+      ),
       meta: { total: count || 0, offset, limit },
     };
   }
-
-  private readonly COUNTRY_NAME_MAP: Record<string, string> = {
-    台灣: 'Taiwan',
-    '台 灣': 'Taiwan',
-    中國: 'China',
-    香港: 'Hong Kong S.A.R.',
-    澳門: 'Macao S.A.R',
-    泰國: 'Thailand',
-    馬來西亞: 'Malaysia',
-    新加坡: 'Singapore',
-    挪威: 'Norway',
-    葡萄牙: 'Portugal',
-    格陵蘭: 'Greenland',
-    澳洲: 'Australia',
-    柬埔寨: 'Cambodia',
-    日本: 'Japan',
-    加拿大: 'Canada',
-    法國: 'France',
-    奧地利: 'Austria',
-    美國: 'United States of America',
-    英國: 'United Kingdom',
-    德國: 'Germany',
-    義大利: 'Italy',
-    西班牙: 'Spain',
-    荷蘭: 'Netherlands',
-    瑞典: 'Sweden',
-    丹麥: 'Denmark',
-    芬蘭: 'Finland',
-    瑞士: 'Switzerland',
-    比利時: 'Belgium',
-    捷克: 'Czechia',
-    波蘭: 'Poland',
-    匈牙利: 'Hungary',
-    希臘: 'Greece',
-    土耳其: 'Turkey',
-    以色列: 'Israel',
-    印度: 'India',
-    韓國: 'South Korea',
-    越南: 'Vietnam',
-    印尼: 'Indonesia',
-    菲律賓: 'Philippines',
-    紐西蘭: 'New Zealand',
-    南非: 'South Africa',
-    巴西: 'Brazil',
-    阿根廷: 'Argentina',
-    墨西哥: 'Mexico',
-    俄羅斯: 'Russia',
-    蒙古: 'Mongolia',
-    智利: 'Chile',
-    秘魯: 'Peru',
-    摩洛哥: 'Morocco',
-    寮國: 'Laos',
-    冰島: 'Iceland',
-    法羅群島: 'Faroe Islands',
-    南極: 'Antarctica',
-    帛琉: 'Palau',
-  };
 
   async findLocations(
     userId: string,
@@ -313,6 +385,13 @@ export class FbPostsService {
       query = query.or(`content.ilike.%${search}%,title.ilike.%${search}%`);
     const { data, error } = await query;
     if (error) return [];
+    const [countryMap, cityMap, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCountryMap(),
+      this.locationTranslations.getCityMap(),
+      this.getTitleEnMap(
+        ((data as unknown as LocationRow[]) || []).map((p) => p.id),
+      ),
+    ]);
     return ((data as unknown as LocationRow[]) || [])
       .map((post) => {
         // rep_media is computed server-side by the fb_posts_rep_media()
@@ -340,6 +419,7 @@ export class FbPostsService {
           lng: hasRealGeo ? repMedia.lng : fallbackLng,
           isApprox: !hasRealGeo && hasFallback,
           title: post.title,
+          title_en: titleEnMap[post.id] || null,
           date: post.event_date,
           cat: post.category,
           uri: uri,
@@ -348,10 +428,10 @@ export class FbPostsService {
             ? post.sub_categories
             : [],
           country: post.country || null,
-          country_en:
-            this.COUNTRY_NAME_MAP[post.country?.trim()] || post.country || null,
+          country_en: this.countryEn(post.country, countryMap),
           continent: post.continent || null,
           city: post.city || null,
+          city_en: this.cityEn(post.city, post.country, cityMap),
         };
       })
       .filter((p) => p !== null);
@@ -367,6 +447,11 @@ export class FbPostsService {
       .eq('is_hidden', false)
       .order('event_date', { ascending: true });
     if (error) return [];
+    const [cityMap, glossaryMaps, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCityMap(),
+      this.getGlossaryMaps(),
+      this.getTitleEnMap((data || []).map((p) => p.id)),
+    ]);
     const normalized = country.trim().replace(/\s+/g, '');
     return (data || [])
       .filter((post) => {
@@ -378,10 +463,20 @@ export class FbPostsService {
       .map((post) => ({
         postId: post.id,
         title: post.title,
+        title_en: titleEnMap[post.id] || null,
         date: post.event_date,
         category: post.category,
         raceName: post.metadata?.race_name || null,
+        raceNameEn: this.translations.raceEn(
+          post.metadata?.race_name,
+          glossaryMaps.raceMap,
+        ),
         city: post.metadata?.city || null,
+        city_en: this.cityEn(
+          post.metadata?.city,
+          post.metadata?.country,
+          cityMap,
+        ),
         participants: (post.metadata?.participants || []).map(
           (p: Participant) => ({
             name: p.name,
@@ -407,16 +502,28 @@ export class FbPostsService {
       .eq('is_hidden', false)
       .order('event_date', { ascending: true });
     if (error) return [];
+    const [countryMap, cityMap, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCountryMap(),
+      this.locationTranslations.getCityMap(),
+      this.getTitleEnMap((data || []).map((p) => p.id)),
+    ]);
     return (data || []).map((post) => {
       const media = Array.isArray(post.media) ? post.media : [];
       const cover = this.resolveCoverImage(post.cover_image, media, publicUrl);
       return {
         postId: post.id,
         title: post.title,
+        title_en: titleEnMap[post.id] || null,
         date: post.event_date,
         category: post.category,
         country: post.metadata?.country || null,
+        country_en: this.countryEn(post.metadata?.country, countryMap),
         city: post.metadata?.city || null,
+        city_en: this.cityEn(
+          post.metadata?.city,
+          post.metadata?.country,
+          cityMap,
+        ),
         coverImage: cover,
         isPrimary: post.id === tripId,
       };
@@ -484,7 +591,9 @@ export class FbPostsService {
         ]
           .filter(Boolean)
           .join('・');
-        const norm = this.normalizePost(p, publicUrl);
+        // Only cover_image is read from this — country_en/city_en aren't
+        // used below, so skip fetching the translation maps for this call.
+        const norm = this.normalizePost(p, publicUrl, {}, {});
         return {
           score: (sameCity ? 100 : 0) - days + (isSecondary ? 5 : 0),
           item: {
@@ -687,7 +796,26 @@ export class FbPostsService {
     const { data, error } = await query.single();
     if (error || !data)
       throw new NotFoundException('找不到文章或該文章已被隱藏。');
-    return this.normalizePost(data, publicUrl);
+    const [countryMap, cityMap, glossaryMaps, translationRow] =
+      await Promise.all([
+        this.locationTranslations.getCountryMap(),
+        this.locationTranslations.getCityMap(),
+        this.getGlossaryMaps(),
+        this.translations.getPostTranslation(id),
+      ]);
+    const normalized = this.normalizePost(
+      data,
+      publicUrl,
+      countryMap,
+      cityMap,
+      glossaryMaps,
+      translationRow?.title,
+    );
+    return {
+      ...normalized,
+      content_en: translationRow?.content ?? null,
+      content_status: translationRow?.content_status ?? null,
+    };
   }
 
   /**
@@ -718,7 +846,6 @@ export class FbPostsService {
       metadata: dto.metadata ?? {},
       cover_image,
       is_hidden: dto.is_hidden ?? false,
-      is_personal_best: dto.is_personal_best ?? false,
       source: 'manual',
     };
     const { data, error } = await client
@@ -729,7 +856,32 @@ export class FbPostsService {
     if (error) throw new InternalServerErrorException(error.message);
     await this.cacheManager.del(`pb:${userId}`);
     await this.stats.refreshAfterMutation(`post create ${data.id}`);
-    return this.normalizePost(data, publicUrl);
+    // Title translation is cheap (one short Gemini call) and every English
+    // list/map view needs one — worth the small extra save latency so a
+    // freshly-created post doesn't show a Chinese title under the English
+    // locale until the next backfill run. Content translation stays lazy
+    // (see TranslationsService) — no call here for that.
+    await this.translations
+      .translateOneTitle(data.id, data.title)
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `translateOneTitle failed for new post ${data.id}: ${errorMessage(err)}`,
+        );
+      });
+    const [countryMap, cityMap, glossaryMaps, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCountryMap(),
+      this.locationTranslations.getCityMap(),
+      this.getGlossaryMaps(),
+      this.getTitleEnMap([data.id]),
+    ]);
+    return this.normalizePost(
+      data,
+      publicUrl,
+      countryMap,
+      cityMap,
+      glossaryMaps,
+      titleEnMap[data.id],
+    );
   }
 
   private readonly IMAGE_MIME_EXT: Record<string, string> = {
@@ -913,7 +1065,42 @@ export class FbPostsService {
     // category, is_hidden and metadata.participants all change the totals.
     // Refreshing unconditionally is simpler than diffing which one moved.
     await this.stats.refreshAfterMutation(`post update ${id}`);
-    return this.normalizePost(data, publicUrl);
+    // A zh title/content edit invalidates a *machine* English translation
+    // (it no longer matches the source text) so the next read re-triggers —
+    // but never a human-reviewed one; an admin's own correction stands
+    // until they change it again. See TranslationsService for the guard.
+    if (updateDto.title !== undefined || updateDto.content !== undefined) {
+      await this.translations
+        .invalidateContentIfMachineTranslated(id)
+        .catch((err: unknown) => {
+          this.logger.warn(
+            `invalidateContentIfMachineTranslated failed for ${id}: ${errorMessage(err)}`,
+          );
+        });
+      if (updateDto.title !== undefined) {
+        await this.translations
+          .translateOneTitle(id, data.title)
+          .catch((err: unknown) => {
+            this.logger.warn(
+              `translateOneTitle failed for updated post ${id}: ${errorMessage(err)}`,
+            );
+          });
+      }
+    }
+    const [countryMap, cityMap, glossaryMaps, titleEnMap] = await Promise.all([
+      this.locationTranslations.getCountryMap(),
+      this.locationTranslations.getCityMap(),
+      this.getGlossaryMaps(),
+      this.getTitleEnMap([data.id]),
+    ]);
+    return this.normalizePost(
+      data,
+      publicUrl,
+      countryMap,
+      cityMap,
+      glossaryMaps,
+      titleEnMap[data.id],
+    );
   }
 
   private parseTimeToSeconds(time: string): number | null {
@@ -1021,11 +1208,19 @@ export class FbPostsService {
       return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     };
 
+    const [raceMap, titleMap, countryMap] = await Promise.all([
+      this.translations.getRaceMap(),
+      this.translations.getTitleMap(data.map((p) => p.id)),
+      this.locationTranslations.getCountryMap(),
+    ]);
+
     type Milestone = {
       date: string;
       raceName: string | null;
+      raceNameEn: string | null;
       postId: string;
       country: string | null;
+      countryEn: string | null;
       display: string;
       delta: string | null;
     };
@@ -1046,7 +1241,11 @@ export class FbPostsService {
     for (const post of data) {
       const raceName: string | null =
         post.metadata?.race_name || post.title || null;
+      const raceNameEn: string | null = post.metadata?.race_name
+        ? this.translations.raceEn(post.metadata.race_name, raceMap)
+        : titleMap[post.id] || null;
       const country: string | null = post.metadata?.country || null;
+      const countryEn: string | null = this.countryEn(country, countryMap);
       for (const p of post.metadata?.participants || []) {
         if (!p.name) continue;
         const cls = this.classifyPbRace(p, post.title || '');
@@ -1068,8 +1267,10 @@ export class FbPostsService {
         const best = {
           date: post.event_date,
           raceName,
+          raceNameEn,
           postId: post.id,
           country,
+          countryEn,
           display,
         };
         if (!existing) {

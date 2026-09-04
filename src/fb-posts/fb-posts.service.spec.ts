@@ -9,12 +9,37 @@ import { FbPostsService } from './fb-posts.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { R2Service } from '../storage/r2.service';
 import { StatsService } from '../stats/stats.service';
+import { LocationTranslationsService } from '../location-translations/location-translations.service';
+import { TranslationsService } from '../translations/translations.service';
 
 describe('FbPostsService', () => {
   let service: FbPostsService;
 
   const mockStatsService = {
     refreshAfterMutation: jest.fn().mockResolvedValue(undefined),
+  };
+
+  const mockLocationTranslationsService = {
+    getCountryMap: jest.fn().mockResolvedValue({ 台灣: 'Taiwan' }),
+    getCityMap: jest.fn().mockResolvedValue({ 台灣: { 台北: 'Taipei' } }),
+    listCountries: jest.fn(),
+    listCities: jest.fn(),
+    upsertCountry: jest.fn(),
+    upsertCity: jest.fn(),
+    deleteCity: jest.fn(),
+  };
+
+  const mockTranslationsService = {
+    getRaceMap: jest.fn().mockResolvedValue({}),
+    getMountainMap: jest.fn().mockResolvedValue({}),
+    getTitleMap: jest.fn().mockResolvedValue({}),
+    getPostTranslation: jest.fn().mockResolvedValue(null),
+    raceEn: jest.fn((zh: string) => zh || null),
+    mountainEn: jest.fn((zh: string) => zh || null),
+    translateOneTitle: jest.fn().mockResolvedValue(undefined),
+    invalidateContentIfMachineTranslated: jest
+      .fn()
+      .mockResolvedValue(undefined),
   };
 
   const mockR2Service = {
@@ -75,6 +100,11 @@ describe('FbPostsService', () => {
         },
         { provide: R2Service, useValue: mockR2Service },
         { provide: StatsService, useValue: mockStatsService },
+        {
+          provide: LocationTranslationsService,
+          useValue: mockLocationTranslationsService,
+        },
+        { provide: TranslationsService, useValue: mockTranslationsService },
       ],
     }).compile();
 
@@ -171,7 +201,13 @@ describe('FbPostsService', () => {
 
       const result = await service.findOne('user-123', 'post-1');
       expect(mockSupabaseClient.eq).toHaveBeenCalledWith('id', 'post-1');
-      expect(result).toEqual({ ...mockPost, cover_image: null });
+      expect(result).toEqual({
+        ...mockPost,
+        cover_image: null,
+        title_en: null,
+        content_en: null,
+        content_status: null,
+      });
     });
   });
 
@@ -524,6 +560,72 @@ describe('FbPostsService', () => {
       );
       const result = await service.findOne('user-123', 'post-1', true);
       expect(result).toMatchObject({ id: 'post-1', cover_image: null });
+    });
+
+    it('computes metadata.country_en/city_en from the injected translation maps', async () => {
+      const mockPost = {
+        id: 'post-1',
+        title: 'Bali Marathon',
+        media: [],
+        metadata: { country: '印尼', city: '峇里島' },
+      };
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPost, error: null }),
+      );
+      mockLocationTranslationsService.getCountryMap.mockResolvedValueOnce({
+        印尼: 'Indonesia',
+      });
+      mockLocationTranslationsService.getCityMap.mockResolvedValueOnce({
+        印尼: { 峇里島: 'Bali' },
+      });
+
+      const result = await service.findOne('user-123', 'post-1');
+
+      expect(result).toMatchObject({
+        metadata: { country_en: 'Indonesia', city_en: 'Bali' },
+      });
+    });
+
+    it('falls back to the original zh value when no translation is found', async () => {
+      const mockPost = {
+        id: 'post-1',
+        title: 'Untranslated',
+        media: [],
+        metadata: { country: '不知名國', city: '不知名城' },
+      };
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPost, error: null }),
+      );
+      mockLocationTranslationsService.getCountryMap.mockResolvedValueOnce({});
+      mockLocationTranslationsService.getCityMap.mockResolvedValueOnce({});
+
+      const result = await service.findOne('user-123', 'post-1');
+
+      expect(result).toMatchObject({
+        metadata: { country_en: '不知名國', city_en: '不知名城' },
+      });
+    });
+
+    it('strips the Taiwan 市/縣 suffix before looking up the city translation', async () => {
+      const mockPost = {
+        id: 'post-1',
+        title: 'Taipei race',
+        media: [],
+        metadata: { country: '台灣', city: '台北市' },
+      };
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: mockPost, error: null }),
+      );
+      mockLocationTranslationsService.getCountryMap.mockResolvedValueOnce({
+        台灣: 'Taiwan',
+      });
+      mockLocationTranslationsService.getCityMap.mockResolvedValueOnce({
+        台灣: { 台北: 'Taipei' },
+      });
+
+      const result = await service.findOne('user-123', 'post-1');
+
+      expect(result).toMatchObject({ metadata: { city_en: 'Taipei' } });
     });
   });
 

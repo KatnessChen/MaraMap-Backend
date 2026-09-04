@@ -12,6 +12,8 @@ import { AuthModule } from './auth/auth.module';
 import { FbPostsModule } from './fb-posts/fb-posts.module';
 import { StatsModule } from './stats/stats.module';
 import { FbImportModule } from './fb-import/fb-import.module';
+import { LocationTranslationsModule } from './location-translations/location-translations.module';
+import { TranslationsModule } from './translations/translations.module';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { FbImportModule } from './fb-import/fb-import.module';
     FbPostsModule,
     StatsModule,
     FbImportModule,
+    LocationTranslationsModule,
+    TranslationsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
