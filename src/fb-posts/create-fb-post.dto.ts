@@ -52,11 +52,6 @@ export class CreateFbPostDto {
   is_hidden?: boolean;
 
   @ApiPropertyOptional()
-  @IsBoolean()
-  @IsOptional()
-  is_personal_best?: boolean;
-
-  @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   cover_image?: string;

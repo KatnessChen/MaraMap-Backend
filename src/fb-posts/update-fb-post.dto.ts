@@ -29,11 +29,6 @@ export class UpdateFbPostDto {
   is_hidden?: boolean;
 
   @ApiPropertyOptional()
-  @IsBoolean()
-  @IsOptional()
-  is_personal_best?: boolean;
-
-  @ApiPropertyOptional()
   @IsString()
   @IsOptional()
   trip_id?: string;
