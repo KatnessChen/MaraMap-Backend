@@ -22,7 +22,7 @@ if (!API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
 
 // --- Partial re-run: node analyze.js <ts1> <ts2> ... — process only these
 // timestamps and merge into the existing delta file (mirrors 02_classify).

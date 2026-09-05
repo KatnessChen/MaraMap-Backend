@@ -25,7 +25,7 @@ if (!API_KEY) {
 }
 
 const genAI = new GoogleGenerativeAI(API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const model = genAI.getGenerativeModel({ model: 'gemini-3.8-flash' });
 
 // --- Partial re-run: node ai-classify.js 1755792563 1743792778 ...
 const TARGET_TIMESTAMPS = process.argv
