@@ -482,7 +482,8 @@ export class TranslationsService {
       .join('; ');
     const prompt =
       `Translate this paragraph from a Chinese marathon/hiking/travel blog post to natural, readable English. ` +
-      `This is one paragraph from a longer article — translate it as a single continuous paragraph and do not insert any new paragraph breaks of your own. ` +
+      `This is one paragraph already split from the rest of the article, so don't add a new paragraph break at the end. ` +
+      `But preserve any line breaks that already exist WITHIN it exactly as-is — e.g. if it's a list of short items or hashtags each on its own line, your translation must have the same number of lines, in the same order, one input line to one output line. Never merge separate lines into a single line, and never add extra line breaks beyond what's already there. ` +
       `Domain terms: ${DOMAIN_GLOSSARY}. ` +
       (knownNames
         ? `Use these confirmed English names verbatim wherever they appear: ${knownNames}. `
