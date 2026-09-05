@@ -18,13 +18,6 @@ import { errorMessage } from '../common/error-message';
 export const MODEL_FLASH = 'gemini-3.8-flash';
 export const MODEL_PRO = 'gemini-2.5-pro';
 
-// A stuck 'pending' claim (the process that took it crashed mid-call) is
-// retryable after this long — short enough that a real crash doesn't leave
-// a post stuck for hours, long enough to comfortably cover the slowest
-// realistic single-article translation (see planning notes: ~30s for a
-// 5,000-character outlier).
-const PENDING_CLAIM_TIMEOUT_MS = 90_000;
-
 const DOMAIN_GLOSSARY = [
   '配速 = pace',
   '分組 = age group',
@@ -64,8 +57,23 @@ interface PostForTranslation {
 
 export type ContentTriggerResult =
   | { status: 'done'; content: string; title: string | null }
-  | { status: 'pending' }
+  | {
+      status: 'pending';
+      content?: string;
+      title?: string | null;
+      progress?: { done: number; total: number };
+    }
   | { status: 'skipped' };
+
+/** Split on the same '\n\n' boundary the frontend renders paragraphs with
+ *  (LogDetailClient.tsx's `content.split('\n\n')`) so translated-chunk
+ *  indices line up 1:1 with what the reader sees. */
+function splitParagraphs(content: string): string[] {
+  return content
+    .split('\n\n')
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
 
 @Injectable()
 export class TranslationsService {
@@ -444,9 +452,14 @@ export class TranslationsService {
     throw new Error(`${label}: exhausted retries`);
   }
 
-  private async translateContentOnly(
+  /** Translates ONE paragraph at a time (see triggerContentTranslation) so
+   *  the reader sees the article grow paragraph-by-paragraph instead of
+   *  waiting for the whole post in one long Gemini call — and so the output
+   *  naturally keeps the source's paragraph boundaries instead of Gemini
+   *  collapsing everything into one undifferentiated block. */
+  private async translateParagraph(
     title: string,
-    content: string,
+    paragraph: string,
     raceNameEn: string | null,
     mountainNameEn: string | null,
   ): Promise<string> {
@@ -468,17 +481,18 @@ export class TranslationsService {
       .filter(Boolean)
       .join('; ');
     const prompt =
-      `Translate this Chinese marathon/hiking/travel blog post to natural, readable English. ` +
+      `Translate this paragraph from a Chinese marathon/hiking/travel blog post to natural, readable English. ` +
+      `This is one paragraph from a longer article — translate it as a single continuous paragraph and do not insert any new paragraph breaks of your own. ` +
       `Domain terms: ${DOMAIN_GLOSSARY}. ` +
       (knownNames
         ? `Use these confirmed English names verbatim wherever they appear: ${knownNames}. `
         : '') +
       `Title (already translated, for context only, do not re-translate it): ${title}\n\n` +
-      `Content:\n${content}\n\n` +
+      `Paragraph:\n${paragraph}\n\n` +
       `Respond with JSON: {"content_en": "..."}`;
     const result = await this.callWithRetry(
       () => model.generateContent(prompt),
-      'translateContentOnly',
+      'translateParagraph',
     );
     const parsed = JSON.parse(result.response.text()) as { content_en: string };
     if (!parsed?.content_en) throw new Error('Gemini returned no content_en');
@@ -487,72 +501,59 @@ export class TranslationsService {
 
   /**
    * The lazy, cache-on-first-view trigger — called from the public
-   * POST /posts/:id/translate endpoint (both the frontend's background
-   * fetch on first English read, and the admin's manual "translate now").
-   * Concurrency-safe via content_status as a claim: only the request that
-   * successfully flips NULL/'failed'/stale-'pending' -> 'pending' proceeds
-   * to call Gemini; everyone else gets 'pending' back immediately without
-   * spending anything.
+   * POST /posts/:id/translate endpoint (both the frontend's polling loop on
+   * first English read, and the admin's manual "translate now"). Each call
+   * translates AT MOST ONE paragraph and returns the joined progress so far
+   * — the frontend calls this repeatedly, appending each newly-translated
+   * paragraph to the display, until it gets back 'done'. Progress is
+   * persisted in content_translated_chunks so an abandoned mid-translation
+   * (reader closes the tab) resumes from where it left off on the next
+   * visit instead of re-translating already-done paragraphs.
+   *
+   * Any caller is allowed to (re)claim a 'pending' row and translate the
+   * next chunk cooperatively — there's no "only the original claimant may
+   * continue" rule, so a crashed/abandoned attempt is never stuck waiting
+   * on a timeout. What prevents two concurrent callers from corrupting
+   * content_translated_chunks (both reading the same doneChunks length and
+   * writing the same index) is content_claimed_at doubling as an optimistic
+   * -concurrency token: every call stamps it with a fresh value when it
+   * claims/heartbeats the row, then writes its translated chunk back
+   * conditioned on that exact stamp still being in place. If another call
+   * raced in between and re-stamped it first, our write affects zero rows
+   * and we re-read + return the winner's state instead of clobbering it —
+   * so at most one paragraph's Gemini call is ever wasted per collision,
+   * never a corrupted or shrinking chunk array. (Confirmed necessary in
+   * practice, not just theoretical: React's dev-mode double-effect-mount
+   * alone was enough to fire two concurrent polling loops for one reader.)
    */
   async triggerContentTranslation(
     userId: string,
     postId: string,
   ): Promise<ContentTriggerResult> {
     const client = this.supabase.getClient();
+    type TranslationRow = {
+      title: string | null;
+      content: string | null;
+      content_status: string | null;
+      content_claimed_at: string | null;
+      source: string | null;
+      content_translated_chunks: string[] | null;
+    };
+    const ROW_COLUMNS =
+      'title, content, content_status, content_claimed_at, source, content_translated_chunks';
 
-    const { data: existingRow } = await client
-      .from('post_translations')
-      .select('title, content, content_status, content_claimed_at, source')
-      .eq('post_id', postId)
-      .eq('locale', 'en')
-      .maybeSingle();
-
-    if (existingRow?.content_status === 'done' && existingRow.content) {
-      return {
-        status: 'done',
-        content: existingRow.content,
-        title: existingRow.title,
-      };
-    }
-
-    const staleCutoff = new Date(
-      Date.now() - PENDING_CLAIM_TIMEOUT_MS,
-    ).toISOString();
-    const claimedAt = new Date().toISOString();
-
-    let claimed = false;
-    if (!existingRow) {
-      const { error: insertError } = await client
+    let row = (
+      await client
         .from('post_translations')
-        .insert({
-          post_id: postId,
-          locale: 'en',
-          content_status: 'pending',
-          content_claimed_at: claimedAt,
-        });
-      // A concurrent request winning the same insert hits the (post_id,
-      // locale) primary key — that's the "lost the race" signal.
-      claimed = !insertError;
-    } else if (
-      existingRow.content_status === null ||
-      existingRow.content_status === 'failed' ||
-      (existingRow.content_status === 'pending' &&
-        existingRow.content_claimed_at &&
-        existingRow.content_claimed_at < staleCutoff)
-    ) {
-      const { data: updated, error: updateError } = await client
-        .from('post_translations')
-        .update({ content_status: 'pending', content_claimed_at: claimedAt })
+        .select(ROW_COLUMNS)
         .eq('post_id', postId)
         .eq('locale', 'en')
-        .or(
-          `content_status.is.null,content_status.eq.failed,and(content_status.eq.pending,content_claimed_at.lt.${staleCutoff})`,
-        )
-        .select('post_id');
-      claimed = !updateError && (updated?.length ?? 0) > 0;
-    }
+        .maybeSingle<TranslationRow>()
+    ).data;
 
-    if (!claimed) return { status: 'pending' };
+    if (row?.content_status === 'done' && row.content) {
+      return { status: 'done', content: row.content, title: row.title };
+    }
 
     const { data: post, error: postError } = await client
       .from('fb_posts')
@@ -561,13 +562,121 @@ export class TranslationsService {
       .eq('id', postId)
       .maybeSingle<PostForTranslation>();
     if (postError || !post || !post.content) {
-      await client
-        .from('post_translations')
-        .update({ content_status: 'failed' })
-        .eq('post_id', postId)
-        .eq('locale', 'en');
+      if (row) {
+        await client
+          .from('post_translations')
+          .update({ content_status: 'failed' })
+          .eq('post_id', postId)
+          .eq('locale', 'en');
+      }
       return { status: 'skipped' };
     }
+
+    const paragraphs = splitParagraphs(post.content);
+    const total = paragraphs.length;
+    if (total === 0) return { status: 'skipped' };
+
+    // content_claimed_at doubles as our optimistic-concurrency token from
+    // here on — see method doc. Every path below ends with `myToken` set to
+    // the value WE just stamped, so the eventual chunk-append write can
+    // detect whether anyone else re-stamped it first.
+    let myToken: string;
+
+    if (!row) {
+      const insertToken = new Date().toISOString();
+      const { error: insertError } = await client
+        .from('post_translations')
+        .insert({
+          post_id: postId,
+          locale: 'en',
+          content_status: 'pending',
+          content_claimed_at: insertToken,
+          content_translated_chunks: [],
+        });
+      if (!insertError) {
+        myToken = insertToken;
+      } else {
+        // Lost the race to create the row — join the winner's in-progress
+        // state instead of starting a second copy.
+        row = (
+          await client
+            .from('post_translations')
+            .select(ROW_COLUMNS)
+            .eq('post_id', postId)
+            .eq('locale', 'en')
+            .maybeSingle<TranslationRow>()
+        ).data;
+        if (row?.content_status === 'done' && row.content) {
+          return { status: 'done', content: row.content, title: row.title };
+        }
+        myToken = new Date().toISOString();
+        await client
+          .from('post_translations')
+          .update({ content_status: 'pending', content_claimed_at: myToken })
+          .eq('post_id', postId)
+          .eq('locale', 'en');
+      }
+    } else {
+      // Row already existed (any status) — (re)claim it unconditionally.
+      // No "is this claim stale" check is needed: cooperative continuation
+      // means an abandoned attempt is simply picked up by the next caller,
+      // never stuck waiting out a timeout.
+      myToken = new Date().toISOString();
+      await client
+        .from('post_translations')
+        .update({ content_status: 'pending', content_claimed_at: myToken })
+        .eq('post_id', postId)
+        .eq('locale', 'en');
+    }
+
+    const doneChunks = row?.content_translated_chunks ?? [];
+
+    if (doneChunks.length >= total) {
+      // Every paragraph already translated but content_status never got
+      // flipped (e.g. a prior call wrote the last chunk then crashed) —
+      // just finalize instead of re-translating anything. Idempotent, so
+      // no token check needed here.
+      const joined = doneChunks.join('\n\n');
+      const titleEn = row?.title ?? post.title;
+      await client
+        .from('post_translations')
+        .update({
+          content: joined,
+          content_status: 'done',
+          source: 'machine',
+          model: MODEL_FLASH,
+          translated_at: new Date().toISOString(),
+        })
+        .eq('post_id', postId)
+        .eq('locale', 'en');
+      return { status: 'done', content: joined, title: titleEn };
+    }
+
+    /** Re-reads the row and reports its current state — used whenever our
+     *  own write loses the optimistic-concurrency race, so the caller gets
+     *  accurate state instead of our possibly-stale/duplicate attempt. */
+    const reportCurrentState = async (
+      fallbackTitle: string | null,
+    ): Promise<ContentTriggerResult> => {
+      const fresh = (
+        await client
+          .from('post_translations')
+          .select(ROW_COLUMNS)
+          .eq('post_id', postId)
+          .eq('locale', 'en')
+          .maybeSingle<TranslationRow>()
+      ).data;
+      if (fresh?.content_status === 'done' && fresh.content) {
+        return { status: 'done', content: fresh.content, title: fresh.title };
+      }
+      const freshChunks = fresh?.content_translated_chunks ?? [];
+      return {
+        status: 'pending',
+        content: freshChunks.join('\n\n'),
+        title: fresh?.title ?? fallbackTitle,
+        progress: { done: freshChunks.length, total },
+      };
+    };
 
     try {
       const metadata = post.metadata || {};
@@ -580,41 +689,76 @@ export class TranslationsService {
           : Promise.resolve(null),
       ]);
       const titleEn =
-        existingRow?.title ??
+        row?.title ??
         (await this.translateTitles([{ id: post.id, title: post.title }])).get(
           post.id,
         ) ??
         post.title;
-      const contentEn = await this.translateContentOnly(
+
+      const nextIndex = doneChunks.length;
+      const translatedParagraph = await this.translateParagraph(
         titleEn || post.title || '',
-        post.content,
+        paragraphs[nextIndex],
         raceNameEn,
         mountainNameEn,
       );
-      const { error: doneError } = await client
+      const newChunks = [...doneChunks, translatedParagraph];
+
+      if (newChunks.length === total) {
+        const joined = newChunks.join('\n\n');
+        const { data: written, error: doneError } = await client
+          .from('post_translations')
+          .update({
+            title: titleEn,
+            content: joined,
+            content_status: 'done',
+            content_translated_chunks: newChunks,
+            source: 'machine',
+            model: MODEL_FLASH,
+            translated_at: new Date().toISOString(),
+          })
+          .eq('post_id', postId)
+          .eq('locale', 'en')
+          .eq('content_claimed_at', myToken)
+          .select('post_id');
+        if (doneError) throw new Error(doneError.message);
+        if (!written || written.length === 0)
+          return reportCurrentState(titleEn);
+        return { status: 'done', content: joined, title: titleEn };
+      }
+
+      const { data: written, error: progressError } = await client
         .from('post_translations')
         .update({
           title: titleEn,
-          content: contentEn,
-          content_status: 'done',
-          source: 'machine',
-          model: MODEL_FLASH,
-          translated_at: new Date().toISOString(),
+          content_translated_chunks: newChunks,
+          content_claimed_at: new Date().toISOString(),
         })
         .eq('post_id', postId)
-        .eq('locale', 'en');
-      if (doneError) throw new Error(doneError.message);
-      return { status: 'done', content: contentEn, title: titleEn };
+        .eq('locale', 'en')
+        .eq('content_claimed_at', myToken)
+        .select('post_id');
+      if (progressError) throw new Error(progressError.message);
+      if (!written || written.length === 0) return reportCurrentState(titleEn);
+      return {
+        status: 'pending',
+        content: newChunks.join('\n\n'),
+        title: titleEn,
+        progress: { done: newChunks.length, total },
+      };
     } catch (err: unknown) {
       this.logger.warn(
-        `triggerContentTranslation failed for post ${postId}: ${errorMessage(err)}`,
+        `triggerContentTranslation failed for post ${postId} (chunk ${doneChunks.length}/${total}): ${errorMessage(err)}`,
       );
-      await client
-        .from('post_translations')
-        .update({ content_status: 'failed' })
-        .eq('post_id', postId)
-        .eq('locale', 'en');
-      return { status: 'skipped' };
+      // Leave content_status as 'pending' with whatever chunks already
+      // succeeded — a future call retries this same paragraph instead of
+      // discarding progress or getting stuck permanently 'failed'.
+      return {
+        status: 'pending',
+        content: doneChunks.join('\n\n'),
+        title: row?.title ?? null,
+        progress: { done: doneChunks.length, total },
+      };
     }
   }
 
@@ -658,7 +802,12 @@ export class TranslationsService {
     if (!row || row.source === 'human') return;
     const { error } = await client
       .from('post_translations')
-      .update({ content: null, content_status: null, content_claimed_at: null })
+      .update({
+        content: null,
+        content_status: null,
+        content_claimed_at: null,
+        content_translated_chunks: null,
+      })
       .eq('post_id', postId)
       .eq('locale', 'en');
     if (error) {
@@ -666,6 +815,32 @@ export class TranslationsService {
         `invalidateContentIfMachineTranslated failed for ${postId}: ${error.message}`,
       );
     }
+  }
+
+  /**
+   * Bulk-clears cached content translations across every post (titles are
+   * untouched) — for wiping out translations produced by an older, worse
+   * prompt/pipeline version so every post regenerates under the current
+   * one. Defaults to skipping source='human' rows (a human-reviewed
+   * translation isn't collateral damage from a pipeline change); pass
+   * force=true to wipe those too.
+   */
+  async resetAllContentTranslations(force = false): Promise<{ count: number }> {
+    const client = this.supabase.getClient();
+    let query = client
+      .from('post_translations')
+      .update({
+        content: null,
+        content_status: null,
+        content_claimed_at: null,
+        content_translated_chunks: null,
+      })
+      .eq('locale', 'en')
+      .not('content', 'is', null);
+    if (!force) query = query.neq('source', 'human');
+    const { data, error } = await query.select('post_id');
+    if (error) throw new InternalServerErrorException(error.message);
+    return { count: data?.length ?? 0 };
   }
 
   // ---- Glossary CRUD (admin review page) ----

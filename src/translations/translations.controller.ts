@@ -47,7 +47,7 @@ export class TranslationsController {
    */
   @Public()
   @Post('posts/:id/translate')
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @ApiOperation({
     summary: '觸發（或讀取）單篇文章的英文內文翻譯，具並發鎖與快取',
   })
@@ -78,6 +78,21 @@ export class TranslationsController {
   ) {
     await this.translations.upsertHumanTranslation(id, dto.title, dto.content);
     return { success: true };
+  }
+
+  /** Wipes cached content (not title) translations for every post so they
+   *  regenerate under the current translation pipeline — e.g. after a
+   *  prompt/chunking change makes old cached translations stale. */
+  @Post('admin/translations/content/reset')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({
+    summary: '清除所有文章的英文內文翻譯快取（不含標題），供重新產生用',
+  })
+  async resetContentTranslations(@Query('force') force?: string) {
+    const { count } = await this.translations.resetAllContentTranslations(
+      force === 'true',
+    );
+    return { success: true, count };
   }
 
   @Post('admin/translations/titles/backfill')
