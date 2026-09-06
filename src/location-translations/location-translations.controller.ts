@@ -58,4 +58,22 @@ export class LocationTranslationsController {
   deleteCity(@Query('country') country: string, @Query('zh') zh: string) {
     return this.service.deleteCity(country, zh);
   }
+
+  @Get('cities/missing')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({
+    summary: '找出文章中實際用到、但尚未有英文對照的城市（依出現次數排序）',
+  })
+  findMissingCities() {
+    return this.service.findMissingCities();
+  }
+
+  @Post('cities/resolve-missing')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({
+    summary: '批次用 AI 補上缺漏城市的英文名稱（標記為待審核）',
+  })
+  resolveMissingCities() {
+    return this.service.resolveMissingCities();
+  }
 }

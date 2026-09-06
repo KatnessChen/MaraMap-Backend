@@ -5,9 +5,13 @@ import {
 } from '@nestjs/common';
 import { LocationTranslationsService } from './location-translations.service';
 import { SupabaseService } from '../supabase/supabase.service';
+import { TranslationsService } from '../translations/translations.service';
 
 describe('LocationTranslationsService', () => {
   let service: LocationTranslationsService;
+  const mockTranslationsService = {
+    resolveCityNames: jest.fn().mockResolvedValue(new Map()),
+  };
 
   const mockSupabaseClient = {
     from: jest.fn().mockReturnThis(),
@@ -16,6 +20,7 @@ describe('LocationTranslationsService', () => {
     upsert: jest.fn().mockReturnThis(),
     insert: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
+    not: jest.fn().mockReturnThis(),
     order: jest.fn().mockReturnThis(),
     single: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
@@ -34,6 +39,7 @@ describe('LocationTranslationsService', () => {
     mockSupabaseClient.upsert.mockReturnThis();
     mockSupabaseClient.insert.mockReturnThis();
     mockSupabaseClient.eq.mockReturnThis();
+    mockSupabaseClient.not.mockReturnThis();
     mockSupabaseClient.order.mockReturnThis();
     mockSupabaseClient.single.mockReturnThis();
     mockSupabaseClient.maybeSingle.mockResolvedValue({
@@ -43,6 +49,8 @@ describe('LocationTranslationsService', () => {
     mockSupabaseClient.then.mockImplementation((resolve) =>
       resolve({ data: [], error: null }),
     );
+    mockTranslationsService.resolveCityNames.mockReset();
+    mockTranslationsService.resolveCityNames.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -53,6 +61,7 @@ describe('LocationTranslationsService', () => {
             getClient: jest.fn().mockReturnValue(mockSupabaseClient),
           },
         },
+        { provide: TranslationsService, useValue: mockTranslationsService },
       ],
     }).compile();
 
@@ -246,6 +255,102 @@ describe('LocationTranslationsService', () => {
         台灣: { 台北: 'Taipei', 台中: 'Taichung' },
         日本: { 東京: 'Tokyo' },
       });
+    });
+  });
+
+  describe('findMissingCities', () => {
+    it('counts (country, city) pairs used in posts, strips Taiwan 市/縣 suffixes before comparing, and excludes pairs already in city_translations', async () => {
+      // 1st: fb_posts metadata scan.
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: [
+            { metadata: { country: '日本', city: '大阪' } },
+            { metadata: { country: '日本', city: '大阪' } },
+            { metadata: { country: '台灣', city: '台北市' } },
+            { metadata: { country: '台灣', city: '台北' } },
+            { metadata: { country: '日本', city: '東京' } },
+            { metadata: { country: null, city: '某地' } },
+            { metadata: { country: '美國', city: null } },
+          ],
+          error: null,
+        }),
+      );
+      // 2nd: listCities() — already-known pairs.
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: [
+            {
+              country_zh: '日本',
+              zh: '東京',
+              en: 'Tokyo',
+              source: 'human',
+              needs_review: false,
+              updated_at: '2026-01-01',
+            },
+          ],
+          error: null,
+        }),
+      );
+
+      const result = await service.findMissingCities();
+
+      expect(result).toEqual([
+        { countryZh: '日本', zh: '大阪', count: 2 },
+        { countryZh: '台灣', zh: '台北', count: 2 },
+      ]);
+    });
+  });
+
+  describe('resolveMissingCities', () => {
+    it('resolves each missing city via TranslationsService and upserts with source machine, needs_review true', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({
+          data: [{ metadata: { country: '日本', city: '大阪' } }],
+          error: null,
+        }),
+      );
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], error: null }),
+      );
+      mockTranslationsService.resolveCityNames.mockResolvedValueOnce(
+        new Map([['日本::大阪', 'Osaka']]),
+      );
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ error: null }),
+      );
+
+      const result = await service.resolveMissingCities();
+
+      expect(mockTranslationsService.resolveCityNames).toHaveBeenCalledWith([
+        { countryZh: '日本', cityZh: '大阪' },
+      ]);
+      expect(mockSupabaseClient.upsert).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            country_zh: '日本',
+            zh: '大阪',
+            en: 'Osaka',
+            source: 'machine',
+            needs_review: true,
+          }),
+        ],
+        { onConflict: 'country_zh,zh' },
+      );
+      expect(result).toEqual({ count: 1 });
+    });
+
+    it('returns count 0 without calling Gemini when nothing is missing', async () => {
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], error: null }),
+      );
+      mockSupabaseClient.then.mockImplementationOnce((resolve) =>
+        resolve({ data: [], error: null }),
+      );
+
+      const result = await service.resolveMissingCities();
+
+      expect(mockTranslationsService.resolveCityNames).not.toHaveBeenCalled();
+      expect(result).toEqual({ count: 0 });
     });
   });
 });

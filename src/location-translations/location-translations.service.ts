@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { TranslationsService } from '../translations/translations.service';
 
 export interface CountryTranslation {
   zh: string;
@@ -15,7 +16,32 @@ export interface CityTranslation {
   country_zh: string;
   zh: string;
   en: string;
+  source: string;
+  needs_review: boolean;
   updated_at: string;
+}
+
+export interface MissingCity {
+  countryZh: string;
+  zh: string;
+  count: number;
+}
+
+/** Taiwan county display strips its 市/縣 suffix before matching a city map
+ *  key — mirrors FbPostsService.cityEn()'s stripTaiwanSuffix() (duplicated
+ *  here rather than shared: it's a 3-line regex, not worth a cross-module
+ *  import for). Applied here too since city_translations' zh keys are
+ *  seeded suffix-free (e.g. "台北"), or findMissingCities() would report
+ *  cities as missing that are actually already covered. */
+const TW_COUNTRY_NAMES = new Set(['台灣', '台 灣', '臺灣', 'Taiwan']);
+function stripTaiwanSuffix(
+  city: string,
+  country: string | null | undefined,
+): string {
+  const trimmed = city.trim();
+  if (!trimmed || !country || !TW_COUNTRY_NAMES.has(country.trim()))
+    return trimmed;
+  return trimmed.replace(/[市縣]$/u, '') || trimmed;
 }
 
 /**
@@ -29,7 +55,10 @@ export interface CityTranslation {
  */
 @Injectable()
 export class LocationTranslationsService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly translations: TranslationsService,
+  ) {}
 
   async listCountries(): Promise<CountryTranslation[]> {
     const client = this.supabase.getClient();
@@ -92,6 +121,9 @@ export class LocationTranslationsService {
     return data || [];
   }
 
+  /** Manual add/edit through the admin CRUD form — always counts as a
+   *  human-confirmed value, clearing any AI-guessed needs_review flag
+   *  (same semantics as upsertRace()/upsertMountain()). */
   async upsertCity(
     countryZh: string,
     zh: string,
@@ -105,6 +137,8 @@ export class LocationTranslationsService {
           country_zh: countryZh.trim(),
           zh: zh.trim(),
           en: en.trim(),
+          source: 'human',
+          needs_review: false,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'country_zh,zh' },
@@ -141,5 +175,85 @@ export class LocationTranslationsService {
       (map[r.country_zh] ??= {})[r.zh] = r.en;
     }
     return map;
+  }
+
+  /**
+   * Every (country, city) pair actually used across all posts that has no
+   * matching row in city_translations yet — the reason an English reader
+   * still sees a Chinese city name somewhere. PostgREST can't DISTINCT a
+   * jsonb field server-side, so this fetches every post's metadata and
+   * dedupes/counts in JS (same shape as StatsService.getCountryCount()).
+   * Sorted by usage count descending so the most-visible gaps surface first.
+   */
+  async findMissingCities(): Promise<MissingCity[]> {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('metadata')
+      .eq('is_hidden', false)
+      .not('metadata', 'is', null);
+    if (error) throw new InternalServerErrorException(error.message);
+
+    const counts = new Map<string, MissingCity>();
+    for (const post of data || []) {
+      const countryZh = (post.metadata?.country as string | undefined)?.trim();
+      const rawCity = post.metadata?.city as string | undefined;
+      if (!countryZh || !rawCity) continue;
+      const zh = stripTaiwanSuffix(rawCity, countryZh);
+      if (!zh) continue;
+      const key = `${countryZh}::${zh}`;
+      const existing = counts.get(key);
+      if (existing) existing.count += 1;
+      else counts.set(key, { countryZh, zh, count: 1 });
+    }
+
+    const known = new Set(
+      (await this.listCities()).map((c) => `${c.country_zh}::${c.zh}`),
+    );
+    return [...counts.values()]
+      .filter((c) => !known.has(`${c.countryZh}::${c.zh}`))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  /**
+   * Finds every missing city (see findMissingCities()) and fills in an
+   * AI-guessed English name for each, flagged needs_review — same trust
+   * model as TranslationsService.resolveProperNoun() for race/mountain
+   * names: the guess goes live immediately (so the site stops showing
+   * Chinese right away) but stays flagged until an admin confirms it via
+   * the normal upsertCity() edit flow.
+   */
+  async resolveMissingCities(): Promise<{ count: number }> {
+    const missing = await this.findMissingCities();
+    if (missing.length === 0) return { count: 0 };
+
+    const resolved = await this.translations.resolveCityNames(
+      missing.map((m) => ({ countryZh: m.countryZh, cityZh: m.zh })),
+    );
+    if (resolved.size === 0) return { count: 0 };
+
+    const client = this.supabase.getClient();
+    const rows = missing
+      .map((m) => {
+        const en = resolved.get(`${m.countryZh}::${m.zh}`);
+        return en
+          ? {
+              country_zh: m.countryZh,
+              zh: m.zh,
+              en,
+              source: 'machine',
+              needs_review: true,
+              updated_at: new Date().toISOString(),
+            }
+          : null;
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    if (rows.length === 0) return { count: 0 };
+
+    const { error } = await client
+      .from('city_translations')
+      .upsert(rows, { onConflict: 'country_zh,zh' });
+    if (error) throw new InternalServerErrorException(error.message);
+    return { count: rows.length };
   }
 }

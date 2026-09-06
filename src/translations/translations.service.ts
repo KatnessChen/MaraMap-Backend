@@ -226,6 +226,73 @@ export class TranslationsService {
     return en;
   }
 
+  /**
+   * Batched English-name resolution for cities not yet in city_translations
+   * — used by LocationTranslationsService.resolveMissingCities() for the
+   * "find every city used in a post but missing from the glossary, then
+   * fill them all in" admin action. Batches many cities into one array-in
+   * array-out Gemini call (same shape as translateTitles) rather than one
+   * call per city like resolveProperNoun, since this runs over a genuine
+   * bulk backlog rather than a single post's lazy lookup. Country is
+   * included per entry as context so the model doesn't confuse same-named
+   * cities in different countries. On failure the whole batch is skipped
+   * (logged) rather than guessed at — a re-run of resolveMissingCities()
+   * will pick up anything still missing.
+   */
+  async resolveCityNames(
+    pairs: Array<{ countryZh: string; cityZh: string }>,
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (pairs.length === 0) return map;
+    const BATCH_SIZE = 25;
+    const model = this.getGenAI().getGenerativeModel({
+      model: MODEL_PRO,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              country: { type: SchemaType.STRING },
+              city: { type: SchemaType.STRING },
+              en: { type: SchemaType.STRING },
+            },
+            required: ['country', 'city', 'en'],
+          },
+        },
+      },
+    });
+    for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+      const batch = pairs.slice(i, i + BATCH_SIZE);
+      const input = batch.map((p) => ({
+        country: p.countryZh,
+        city: p.cityZh,
+      }));
+      const prompt =
+        `Give the standard English name used internationally for each of these Chinese city names, given their country for disambiguation (some city names repeat across countries). ` +
+        `Use the conventional English spelling (e.g. 京都 in 日本 -> "Kyoto"), not a literal transliteration, when one exists. ` +
+        `Respond as a JSON array with one entry per input, echoing back the same "country" and "city", plus "en". ` +
+        `Input: ${JSON.stringify(input)}`;
+      try {
+        const result = await model.generateContent(prompt);
+        const parsed = JSON.parse(result.response.text()) as Array<{
+          country: string;
+          city: string;
+          en: string;
+        }>;
+        for (const row of parsed) {
+          if (row?.country && row?.city && row.en) {
+            map.set(`${row.country}::${row.city}`, row.en);
+          }
+        }
+      } catch (err: unknown) {
+        this.logger.warn(`resolveCityNames batch failed: ${errorMessage(err)}`);
+      }
+    }
+    return map;
+  }
+
   /** Batched title_en lookup for list endpoints — one query for N posts,
    *  same "fetch the map once per request" shape as country/city maps.
    *  Chunked: a single `.in('post_id', ...)` with hundreds of UUIDs can
