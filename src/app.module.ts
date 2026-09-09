@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -14,6 +14,7 @@ import { StatsModule } from './stats/stats.module';
 import { FbImportModule } from './fb-import/fb-import.module';
 import { LocationTranslationsModule } from './location-translations/location-translations.module';
 import { TranslationsModule } from './translations/translations.module';
+import { CrawlerLogMiddleware } from './common/crawler-log.middleware';
 
 @Module({
   imports: [
@@ -36,6 +37,14 @@ import { TranslationsModule } from './translations/translations.module';
     TranslationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    CrawlerLogMiddleware,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(CrawlerLogMiddleware).forRoutes('*');
+  }
+}
