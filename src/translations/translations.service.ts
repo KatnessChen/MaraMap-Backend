@@ -7,16 +7,32 @@ import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { SupabaseService } from '../supabase/supabase.service';
 import { errorMessage } from '../common/error-message';
 
-// Content is bulk (~310k characters across the corpus) and only ever
-// translated lazily, one post at a time, so cost/latency dominate the
-// choice — Flash is the tier built for that. Titles and proper-noun
-// resolution are low-volume (~17k characters total) but high-exposure, so
-// Pro is worth it there. Deliberately NOT the newest Pro (gemini-3.1-pro is
-// still preview-only as of 2026-09, no GA Gemini 3.x Pro exists yet) —
-// preview models can be deprecated on short notice, which is a bad trade
-// for a feature meant to keep working unattended.
+// The installed @google/generative-ai SDK (0.24.1) predates Gemini 2.5's
+// "thinking" feature, so its GenerationConfig type doesn't declare
+// thinkingConfig — but the SDK stores generationConfig as-is and forwards it
+// straight to the REST API with no field whitelisting, so the field is
+// honored at runtime regardless. Augmenting the type here avoids `as any`
+// at every call site below.
+declare module '@google/generative-ai' {
+  interface GenerationConfig {
+    thinkingConfig?: { thinkingBudget?: number };
+  }
+}
+
+// Everything here runs on Flash. Titles and proper-noun/city resolution
+// used to run on gemini-2.5-pro on the theory that low-volume, high-exposure
+// work was worth paying more for — but Pro is a reasoning model that can't
+// fully disable "thinking" (minimum thinkingBudget 128, unlike Flash which
+// can go to 0), and none of these tasks are reasoning-shaped: they're
+// single-hop recall (does the model already know this name's standard
+// English form?) or straightforward sentence translation, not multi-step
+// problems. Pro's mandatory thinking tokens bill as output tokens at the
+// same rate as the visible answer, and in practice dwarfed it — confirmed
+// from real billing data, not a guess. Switching to Flash (thinkingBudget
+// explicitly 0 everywhere below) drops that cost with no loss of safety
+// net: a bad guess from either model still lands in needs_review for an
+// admin to catch, same as before.
 export const MODEL_FLASH = 'gemini-3.8-flash';
-export const MODEL_PRO = 'gemini-2.5-pro';
 
 const DOMAIN_GLOSSARY = [
   '配速 = pace',
@@ -183,9 +199,10 @@ export class TranslationsService {
 
     const label = kind === 'race' ? 'marathon/race name' : 'mountain/peak name';
     const model = this.getGenAI().getGenerativeModel({
-      model: MODEL_PRO,
+      model: MODEL_FLASH,
       generationConfig: {
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: {
           type: SchemaType.OBJECT,
           properties: { en: { type: SchemaType.STRING } },
@@ -246,9 +263,10 @@ export class TranslationsService {
     if (pairs.length === 0) return map;
     const BATCH_SIZE = 25;
     const model = this.getGenAI().getGenerativeModel({
-      model: MODEL_PRO,
+      model: MODEL_FLASH,
       generationConfig: {
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: {
           type: SchemaType.ARRAY,
           items: {
@@ -399,7 +417,7 @@ export class TranslationsService {
         locale: 'en',
         title: translated.get(p.id) || p.title,
         source: 'machine',
-        model: MODEL_PRO,
+        model: MODEL_FLASH,
         translated_at: new Date().toISOString(),
       }));
       const { error: upsertError } = await client
@@ -437,7 +455,7 @@ export class TranslationsService {
         locale: 'en',
         title: translated.get(postId) || title,
         source: 'machine',
-        model: MODEL_PRO,
+        model: MODEL_FLASH,
         translated_at: new Date().toISOString(),
       },
       { onConflict: 'post_id,locale' },
@@ -452,9 +470,10 @@ export class TranslationsService {
     posts: Array<{ id: string; title: string | null }>,
   ): Promise<Map<string, string>> {
     const model = this.getGenAI().getGenerativeModel({
-      model: MODEL_PRO,
+      model: MODEL_FLASH,
       generationConfig: {
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: {
           type: SchemaType.ARRAY,
           items: {
@@ -534,6 +553,7 @@ export class TranslationsService {
       model: MODEL_FLASH,
       generationConfig: {
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget: 0 },
         responseSchema: {
           type: SchemaType.OBJECT,
           properties: { content_en: { type: SchemaType.STRING } },
