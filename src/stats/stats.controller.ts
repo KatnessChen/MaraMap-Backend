@@ -30,16 +30,15 @@ export class StatsController {
   }
 
   @Post('visit')
-  @ApiOperation({ summary: 'Record a page visit (human vs bot auto-detected)' })
+  @ApiOperation({ summary: 'Record a page visit' })
   async recordVisit(
     @Body('path') path: string,
-    @Headers('user-agent') userAgent: string,
     @Headers('origin') origin: string,
   ) {
     if (!path) throw new BadRequestException('path is required');
     if (/localhost|127\.0\.0\.1/.test(origin || ''))
       return { ok: true, skipped: true };
-    await this.statsService.recordVisit(path, userAgent || '');
+    await this.statsService.recordVisit(path);
     return { ok: true };
   }
 

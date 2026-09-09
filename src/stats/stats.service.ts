@@ -3,13 +3,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { SupabaseService } from '../supabase/supabase.service';
 import { Participant } from '../fb-posts/participant.types';
 
-const BOT_PATTERN =
-  /bot|spider|crawler|crawl|slurp|fetch|scan|check|monitor|scrape|archive|feed|reader|parser|headless|python|java|ruby|curl|wget|axios|libwww|go-http|http-client|okhttp|facebookexternalhit|twitterbot|linkedinbot|slackbot|discordbot|whatsapp|telegram|applebot|yandex|baidu|duckduck|semrush|ahrefs|mj12|dotbot|petalbot|gptbot|claudebot|oai-searchbot|meta-externalagent|perplexitybot/i;
-
 export interface PageView {
   path: string;
   human_views: number;
-  bot_views: number;
 }
 
 interface StatsAccumulator {
@@ -85,14 +81,11 @@ export class StatsService {
     return { ...statsResult.data, country_count: countryCount };
   }
 
-  async recordVisit(path: string, userAgent: string): Promise<void> {
-    const isBot = BOT_PATTERN.test(userAgent || '');
-    const field = isBot ? 'bot_views' : 'human_views';
+  async recordVisit(path: string): Promise<void> {
     const client = this.supabase.getClient();
 
     const { error } = await client.rpc('increment_page_view', {
       p_path: path,
-      p_field: field,
     });
 
     if (error) {
@@ -102,18 +95,17 @@ export class StatsService {
 
   async getVisits(): Promise<{
     total_human: number;
-    total_bot: number;
     pages: PageView[];
   }> {
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('page_views')
-      .select('path, human_views, bot_views')
+      .select('path, human_views')
       .order('human_views', { ascending: false });
 
     if (error) {
       this.logger.error(`Failed to fetch visits: ${error.message}`);
-      return { total_human: 0, total_bot: 0, pages: [] };
+      return { total_human: 0, pages: [] };
     }
 
     const pages = data || [];
@@ -121,8 +113,7 @@ export class StatsService {
       (sum, r) => sum + Number(r.human_views),
       0,
     );
-    const total_bot = pages.reduce((sum, r) => sum + Number(r.bot_views), 0);
-    return { total_human, total_bot, pages };
+    return { total_human, pages };
   }
 
   async getCountryCount(): Promise<number> {
