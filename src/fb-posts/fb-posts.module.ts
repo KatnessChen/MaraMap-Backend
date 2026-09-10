@@ -8,6 +8,7 @@ import { StorageModule } from '../storage/storage.module';
 import { StatsModule } from '../stats/stats.module';
 import { LocationTranslationsModule } from '../location-translations/location-translations.module';
 import { TranslationsModule } from '../translations/translations.module';
+import { IndexNowService } from '../common/indexnow.service';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { TranslationsModule } from '../translations/translations.module';
     TranslationsModule,
   ],
   controllers: [FbPostsController],
-  providers: [FbPostsService, AdminGuard],
+  providers: [FbPostsService, AdminGuard, IndexNowService],
   exports: [FbPostsService],
 })
 export class FbPostsModule {}

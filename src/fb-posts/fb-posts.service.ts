@@ -20,6 +20,7 @@ import { StatsService } from '../stats/stats.service';
 import { LocationTranslationsService } from '../location-translations/location-translations.service';
 import { TranslationsService } from '../translations/translations.service';
 import { errorMessage } from '../common/error-message';
+import { IndexNowService } from '../common/indexnow.service';
 
 /** Taiwan county display strips its 市/縣 suffix before matching a city map
  *  key — mirrors MaraMap-Frontend's formatCityName. Applied here too since
@@ -86,6 +87,7 @@ export class FbPostsService {
     private readonly stats: StatsService,
     private readonly locationTranslations: LocationTranslationsService,
     private readonly translations: TranslationsService,
+    private readonly indexNow: IndexNowService,
   ) {}
 
   /** Fetched once per request alongside countryMap/cityMap — see normalizePost(). */
@@ -856,6 +858,9 @@ export class FbPostsService {
     if (error) throw new InternalServerErrorException(error.message);
     await this.cacheManager.del(`pb:${userId}`);
     await this.stats.refreshAfterMutation(`post create ${data.id}`);
+    if (!row.is_hidden) {
+      await this.indexNow.submitPaths([`/log/${data.id}`]);
+    }
     // Title translation is cheap (one short Gemini call) and every English
     // list/map view needs one — worth the small extra save latency so a
     // freshly-created post doesn't show a Chinese title under the English
@@ -1065,6 +1070,9 @@ export class FbPostsService {
     // category, is_hidden and metadata.participants all change the totals.
     // Refreshing unconditionally is simpler than diffing which one moved.
     await this.stats.refreshAfterMutation(`post update ${id}`);
+    if (!data.is_hidden) {
+      await this.indexNow.submitPaths([`/log/${id}`]);
+    }
     // A zh title/content edit invalidates a *machine* English translation
     // (it no longer matches the source text) so the next read re-triggers —
     // but never a human-reviewed one; an admin's own correction stands

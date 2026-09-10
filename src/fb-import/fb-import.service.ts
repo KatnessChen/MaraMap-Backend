@@ -9,6 +9,7 @@ import { R2Service } from '../storage/r2.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { StatsService } from '../stats/stats.service';
 import { TranslationsService } from '../translations/translations.service';
+import { IndexNowService } from '../common/indexnow.service';
 import {
   extractJsonEntries,
   mediaEntries,
@@ -133,6 +134,7 @@ export class FbImportService {
     private readonly r2: R2Service,
     private readonly supabase: SupabaseService,
     private readonly translations: TranslationsService,
+    private readonly indexNow: IndexNowService,
     @Inject(CACHE_MANAGER) private readonly cache: Cache,
   ) {}
 
@@ -258,6 +260,10 @@ export class FbImportService {
     let stageIndex = 0;
     this.running.add(batch);
     let postCount = 0;
+    // 06_import writes rows with a real created_at, so this timestamp (taken
+    // before it runs) is enough to find exactly which posts this batch
+    // inserted afterward — no need for its own batch-id column.
+    const startedAt = new Date().toISOString();
 
     try {
       // Local disk is a fresh scratchpad on whatever instance we landed on —
@@ -368,7 +374,29 @@ export class FbImportService {
             `translateMissingTitles after import failed: ${err}`,
           ),
         );
+      // Same reasoning as translateMissingTitles above: query rather than
+      // track IDs through the spawned stages, and run even on a partial
+      // failure since 06_import's rows are already committed by then.
+      await this.pingIndexNowForBatch(startedAt).catch((err: unknown) =>
+        this.logger.warn(`IndexNow submission after import failed: ${err}`),
+      );
     }
+  }
+
+  private async pingIndexNowForBatch(startedAt: string): Promise<void> {
+    const client = this.supabase.getClient();
+    const { data, error } = await client
+      .from('fb_posts')
+      .select('id')
+      .eq('user_id', process.env.USER_ID)
+      .eq('is_hidden', false)
+      .gte('created_at', startedAt);
+    if (error) {
+      this.logger.warn(`IndexNow post lookup failed: ${error.message}`);
+      return;
+    }
+    const paths = (data || []).map((p: { id: string }) => `/log/${p.id}`);
+    await this.indexNow.submitPaths(paths);
   }
 
   /**

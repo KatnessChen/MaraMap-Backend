@@ -15,6 +15,7 @@ import { StatsService } from '../stats/stats.service';
 import { R2Service } from '../storage/r2.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { TranslationsService } from '../translations/translations.service';
+import { IndexNowService } from '../common/indexnow.service';
 
 jest.mock('child_process', () => ({
   spawn: jest.fn(),
@@ -136,6 +137,13 @@ class FakeSupabase {
         select: () => ({
           eq: () => ({
             in: async () => ({ data: this.rows, error: null }),
+            // IndexNowService's post-import lookup: .eq('user_id',...)
+            // .eq('is_hidden', false).gte('created_at', ...). Real content
+            // doesn't matter here since NODE_ENV isn't 'production' in
+            // tests, so submitPaths() no-ops regardless of what's returned.
+            eq: () => ({
+              gte: async () => ({ data: [], error: null }),
+            }),
           }),
         }),
         update: (value: { media: { uri: string }[] }) => ({
@@ -219,6 +227,7 @@ describe('FbImportService', () => {
       {
         translateMissingTitles: jest.fn().mockResolvedValue(0),
       } as unknown as TranslationsService,
+      new IndexNowService(),
       { del: cacheDel } as unknown as Cache,
     );
 

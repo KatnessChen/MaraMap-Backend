@@ -7,6 +7,7 @@ import { StatsModule } from '../stats/stats.module';
 import { StorageModule } from '../storage/storage.module';
 import { SupabaseModule } from '../supabase/supabase.module';
 import { TranslationsModule } from '../translations/translations.module';
+import { IndexNowService } from '../common/indexnow.service';
 
 @Module({
   imports: [
@@ -17,6 +18,6 @@ import { TranslationsModule } from '../translations/translations.module';
     TranslationsModule,
   ],
   controllers: [FbImportController],
-  providers: [FbImportService, AdminGuard],
+  providers: [FbImportService, AdminGuard, IndexNowService],
 })
 export class FbImportModule {}

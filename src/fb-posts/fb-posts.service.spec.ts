@@ -11,6 +11,7 @@ import { R2Service } from '../storage/r2.service';
 import { StatsService } from '../stats/stats.service';
 import { LocationTranslationsService } from '../location-translations/location-translations.service';
 import { TranslationsService } from '../translations/translations.service';
+import { IndexNowService } from '../common/indexnow.service';
 
 describe('FbPostsService', () => {
   let service: FbPostsService;
@@ -105,6 +106,7 @@ describe('FbPostsService', () => {
           useValue: mockLocationTranslationsService,
         },
         { provide: TranslationsService, useValue: mockTranslationsService },
+        IndexNowService,
       ],
     }).compile();
 
