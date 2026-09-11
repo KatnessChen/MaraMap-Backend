@@ -322,15 +322,26 @@ export class TranslationsService {
     if (postIds.length === 0) return {};
     const client = this.supabase.getClient();
     const CHUNK_SIZE = 150;
-    const map: Record<string, string> = {};
+    const chunks: string[][] = [];
     for (let i = 0; i < postIds.length; i += CHUNK_SIZE) {
-      const chunk = postIds.slice(i, i + CHUNK_SIZE);
-      const { data, error } = await client
-        .from('post_translations')
-        .select('post_id, title')
-        .eq('locale', 'en')
-        .not('title', 'is', null)
-        .in('post_id', chunk);
+      chunks.push(postIds.slice(i, i + CHUNK_SIZE));
+    }
+    // Chunks are independent queries, so they're fired concurrently rather
+    // than awaited one at a time in the loop — for 500+ posts that was 4+
+    // sequential round trips to Supabase stacked on the request's critical
+    // path (a big chunk of /locations' ~600ms response time).
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        client
+          .from('post_translations')
+          .select('post_id, title')
+          .eq('locale', 'en')
+          .not('title', 'is', null)
+          .in('post_id', chunk),
+      ),
+    );
+    const map: Record<string, string> = {};
+    for (const { data, error } of results) {
       if (error) {
         this.logger.warn(`getTitleMap chunk failed: ${error.message}`);
         continue;

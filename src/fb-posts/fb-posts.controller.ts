@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { FbPostsService } from './fb-posts.service';
+import { StatsService } from '../stats/stats.service';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UpdateFbPostDto } from './update-fb-post.dto';
 import { CreateFbPostDto } from './create-fb-post.dto';
@@ -33,7 +34,10 @@ export interface RequestWithAdmin extends Request {
 @Controller()
 @UseGuards(AdminGuard)
 export class FbPostsController {
-  constructor(private readonly fbPostsService: FbPostsService) {}
+  constructor(
+    private readonly fbPostsService: FbPostsService,
+    private readonly statsService: StatsService,
+  ) {}
 
   /**
    * `?user_id=` only overrides the site's default USER_ID for an
@@ -300,6 +304,23 @@ export class FbPostsController {
   ) {
     const targetUserId = this.getTargetUserId(userId, req.isAdmin);
     return this.fbPostsService.getCategories(targetUserId);
+  }
+
+  @Public()
+  @Get('home-summary')
+  @ApiOperation({
+    summary: '首頁彙總統計（分類 + Davis 全馬數），合併成一次請求給首頁用',
+  })
+  async getHomeSummary(
+    @Req() req: RequestWithAdmin,
+    @Query('user_id') userId?: string,
+  ) {
+    const targetUserId = this.getTargetUserId(userId, req.isAdmin);
+    const [categories, davisStats] = await Promise.all([
+      this.fbPostsService.getCategories(targetUserId),
+      this.statsService.getParticipantStats('Davis'),
+    ]);
+    return { categories, totalFM: davisStats?.fm_count || 0 };
   }
 
   @Get('geocode')

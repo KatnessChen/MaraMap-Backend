@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Reflector } from '@nestjs/core';
 import { FbPostsController, RequestWithAdmin } from './fb-posts.controller';
 import { FbPostsService } from './fb-posts.service';
+import { StatsService } from '../stats/stats.service';
 import { AuthService } from '../auth/auth.service';
 import { AdminGuard } from '../auth/guards/admin.guard';
 
@@ -26,6 +27,10 @@ describe('FbPostsController', () => {
     getCategories: jest.fn(),
   };
 
+  const mockStatsService = {
+    getParticipantStats: jest.fn(),
+  };
+
   const ORIGINAL_USER_ID = process.env.USER_ID;
 
   beforeEach(async () => {
@@ -36,6 +41,10 @@ describe('FbPostsController', () => {
         {
           provide: FbPostsService,
           useValue: mockFbPostsService,
+        },
+        {
+          provide: StatsService,
+          useValue: mockStatsService,
         },
         {
           provide: AuthService,
@@ -228,6 +237,36 @@ describe('FbPostsController', () => {
     it('honors ?user_id= when the caller is an authenticated admin', async () => {
       await controller.getCategories(mockReq(true), 'user-1');
       expect(service.getCategories).toHaveBeenCalledWith('user-1');
+    });
+  });
+
+  describe('getHomeSummary', () => {
+    it('combines categories and Davis race stats into one response', async () => {
+      mockFbPostsService.getCategories.mockResolvedValueOnce([
+        { name: '馬拉松', count: 5, sub_categories: [] },
+      ]);
+      mockStatsService.getParticipantStats.mockResolvedValueOnce({
+        fm_count: 3,
+      });
+
+      const result = await controller.getHomeSummary(mockReq(false), undefined);
+
+      expect(mockStatsService.getParticipantStats).toHaveBeenCalledWith(
+        'Davis',
+      );
+      expect(result).toEqual({
+        categories: [{ name: '馬拉松', count: 5, sub_categories: [] }],
+        totalFM: 3,
+      });
+    });
+
+    it('falls back to 0 when Davis has no stats row yet', async () => {
+      mockFbPostsService.getCategories.mockResolvedValueOnce([]);
+      mockStatsService.getParticipantStats.mockResolvedValueOnce(null);
+
+      const result = await controller.getHomeSummary(mockReq(false), undefined);
+
+      expect(result.totalFM).toBe(0);
     });
   });
 
