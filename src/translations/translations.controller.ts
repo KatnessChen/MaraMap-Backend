@@ -20,6 +20,7 @@ import { UpsertRaceDto } from './dto/upsert-race.dto';
 import { UpsertMountainDto } from './dto/upsert-mountain.dto';
 import { UpsertPostTranslationDto } from './dto/upsert-post-translation.dto';
 import type { RequestWithAdmin } from '../fb-posts/fb-posts.controller';
+import { matchAiCrawler } from '../common/ai-crawler-patterns';
 
 @ApiTags('translations')
 @Controller()
@@ -57,7 +58,15 @@ export class TranslationsController {
     @Query('user_id') userId?: string,
   ) {
     const targetUserId = this.getTargetUserId(userId, !!req.isAdmin);
-    return this.translations.triggerContentTranslation(targetUserId, id);
+    // Called client-side by the article page itself — a headless-browser
+    // crawler hits this directly with its own real User-Agent, no SSR hop
+    // to strip it (unlike the SSR post fetch in the frontend's page.tsx).
+    const isCrawler = !!matchAiCrawler(req.headers['user-agent'] || '');
+    return this.translations.triggerContentTranslation(
+      targetUserId,
+      id,
+      isCrawler,
+    );
   }
 
   /** Bulk content_status map, keyed by post id — the frontend's sitemap

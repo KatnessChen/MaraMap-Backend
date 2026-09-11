@@ -628,6 +628,7 @@ export class TranslationsService {
   async triggerContentTranslation(
     userId: string,
     postId: string,
+    isCrawler = false,
   ): Promise<ContentTriggerResult> {
     const client = this.supabase.getClient();
     type TranslationRow = {
@@ -652,6 +653,23 @@ export class TranslationsService {
 
     if (row?.content_status === 'done' && row.content) {
       return { status: 'done', content: row.content, title: row.title };
+    }
+
+    // A crawler (this endpoint is @Public — the article page itself calls it
+    // client-side, so a headless-browser crawler hits it exactly like a
+    // human reader would) gets whatever's already cached above, but never
+    // triggers a fresh translation: real per-paragraph Gemini calls should
+    // be paid for by an actual reader's first view, not a bot that happened
+    // to render the page first. Reporting 'done' (with no content) makes
+    // the caller's poll loop stop after this one call instead of looping up
+    // to MAX_POLL_ROUNDS — LogDetailClient's zh-fallback rule then applies,
+    // same as any other untranslated post.
+    if (isCrawler) {
+      // content: '' rather than omitted — the 'done' status is what makes
+      // LogDetailClient's poll loop stop; an empty content_en then correctly
+      // falls back to the zh original via translatePairedName's `en ? en :
+      // zh` check (empty string is falsy, same as null/undefined there).
+      return { status: 'done', content: '', title: null };
     }
 
     const { data: post, error: postError } = await client
