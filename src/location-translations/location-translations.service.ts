@@ -1,8 +1,11 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { SupabaseService } from '../supabase/supabase.service';
 import { TranslationsService } from '../translations/translations.service';
 
@@ -55,9 +58,21 @@ function stripTaiwanSuffix(
  */
 @Injectable()
 export class LocationTranslationsService {
+  // country/city translations only change through the admin CRUD methods
+  // below, every one of which deletes the relevant key — the TTL is just a
+  // backstop, same reasoning as FbPostsService.findPersonalBests()'s PB
+  // cache. This data used to be re-queried from Supabase on every single
+  // read endpoint call (categories, locations, a single post, ...), which
+  // was most of a /log/[id] page's ~200ms backend latency for what's
+  // effectively static reference data.
+  private static readonly COUNTRY_MAP_CACHE_KEY = 'location-translations:country-map';
+  private static readonly CITY_MAP_CACHE_KEY = 'location-translations:city-map';
+  private static readonly MAP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly translations: TranslationsService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
 
   async listCountries(): Promise<CountryTranslation[]> {
@@ -105,6 +120,9 @@ export class LocationTranslationsService {
       .select()
       .single();
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(
+      LocationTranslationsService.COUNTRY_MAP_CACHE_KEY,
+    );
     return data;
   }
 
@@ -146,6 +164,7 @@ export class LocationTranslationsService {
       .select()
       .single();
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(LocationTranslationsService.CITY_MAP_CACHE_KEY);
     return data;
   }
 
@@ -157,23 +176,42 @@ export class LocationTranslationsService {
       .eq('country_zh', countryZh.trim())
       .eq('zh', zh.trim());
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(LocationTranslationsService.CITY_MAP_CACHE_KEY);
   }
 
-  /** zh → en, for FbPostsService.countryEn(). Fetch once per request. */
+  /** zh → en, for FbPostsService.countryEn(). Cached — see the class-level comment. */
   async getCountryMap(): Promise<Record<string, string>> {
+    const cached = await this.cacheManager.get<Record<string, string>>(
+      LocationTranslationsService.COUNTRY_MAP_CACHE_KEY,
+    );
+    if (cached) return cached;
     const rows = await this.listCountries();
     const map: Record<string, string> = {};
     for (const r of rows) map[r.zh] = r.en;
+    await this.cacheManager.set(
+      LocationTranslationsService.COUNTRY_MAP_CACHE_KEY,
+      map,
+      LocationTranslationsService.MAP_CACHE_TTL_MS,
+    );
     return map;
   }
 
-  /** country zh → { city zh → city en }, for FbPostsService.cityEn(). */
+  /** country zh → { city zh → city en }, for FbPostsService.cityEn(). Cached — see the class-level comment. */
   async getCityMap(): Promise<Record<string, Record<string, string>>> {
+    const cached = await this.cacheManager.get<
+      Record<string, Record<string, string>>
+    >(LocationTranslationsService.CITY_MAP_CACHE_KEY);
+    if (cached) return cached;
     const rows = await this.listCities();
     const map: Record<string, Record<string, string>> = {};
     for (const r of rows) {
       (map[r.country_zh] ??= {})[r.zh] = r.en;
     }
+    await this.cacheManager.set(
+      LocationTranslationsService.CITY_MAP_CACHE_KEY,
+      map,
+      LocationTranslationsService.MAP_CACHE_TTL_MS,
+    );
     return map;
   }
 

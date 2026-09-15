@@ -3,6 +3,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { LocationTranslationsService } from './location-translations.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { TranslationsService } from '../translations/translations.service';
@@ -11,6 +12,13 @@ describe('LocationTranslationsService', () => {
   let service: LocationTranslationsService;
   const mockTranslationsService = {
     resolveCityNames: jest.fn().mockResolvedValue(new Map()),
+  };
+  // getCountryMap()/getCityMap() are cached — returning undefined from get()
+  // means every test still exercises the real Supabase-fetch path below.
+  const mockCacheManager = {
+    get: jest.fn().mockResolvedValue(undefined),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
   };
 
   const mockSupabaseClient = {
@@ -51,6 +59,10 @@ describe('LocationTranslationsService', () => {
     );
     mockTranslationsService.resolveCityNames.mockReset();
     mockTranslationsService.resolveCityNames.mockResolvedValue(new Map());
+    mockCacheManager.get.mockReset();
+    mockCacheManager.get.mockResolvedValue(undefined);
+    mockCacheManager.set.mockReset();
+    mockCacheManager.del.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,6 +74,7 @@ describe('LocationTranslationsService', () => {
           },
         },
         { provide: TranslationsService, useValue: mockTranslationsService },
+        { provide: CACHE_MANAGER, useValue: mockCacheManager },
       ],
     }).compile();
 

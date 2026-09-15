@@ -1,8 +1,11 @@
 import {
+  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { SupabaseService } from '../supabase/supabase.service';
 import { errorMessage } from '../common/error-message';
@@ -96,7 +99,18 @@ export class TranslationsService {
   private readonly logger = new Logger(TranslationsService.name);
   private genAI: GoogleGenerativeAI | null = null;
 
-  constructor(private readonly supabase: SupabaseService) {}
+  // race/mountain translations only change through upsertRace()/deleteRace()/
+  // upsertMountain()/deleteMountain() below, every one of which deletes the
+  // relevant key — the TTL is just a backstop, same reasoning as
+  // LocationTranslationsService's country/city map cache.
+  private static readonly RACE_MAP_CACHE_KEY = 'translations:race-map';
+  private static readonly MOUNTAIN_MAP_CACHE_KEY = 'translations:mountain-map';
+  private static readonly MAP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+  constructor(
+    private readonly supabase: SupabaseService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
 
   private getGenAI(): GoogleGenerativeAI {
     if (!this.genAI) {
@@ -107,10 +121,14 @@ export class TranslationsService {
     return this.genAI;
   }
 
-  // ---- Glossary maps (fetch once per request, mirrors
-  // LocationTranslationsService.getCountryMap()/getCityMap()) ----
+  // ---- Glossary maps (cached — see the class-level comment above;
+  // mirrors LocationTranslationsService.getCountryMap()/getCityMap()) ----
 
   async getRaceMap(): Promise<Record<string, string>> {
+    const cached = await this.cacheManager.get<Record<string, string>>(
+      TranslationsService.RACE_MAP_CACHE_KEY,
+    );
+    if (cached) return cached;
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('race_translations')
@@ -118,10 +136,19 @@ export class TranslationsService {
     if (error) throw new InternalServerErrorException(error.message);
     const map: Record<string, string> = {};
     for (const r of data || []) map[r.zh] = r.en;
+    await this.cacheManager.set(
+      TranslationsService.RACE_MAP_CACHE_KEY,
+      map,
+      TranslationsService.MAP_CACHE_TTL_MS,
+    );
     return map;
   }
 
   async getMountainMap(): Promise<Record<string, string>> {
+    const cached = await this.cacheManager.get<Record<string, string>>(
+      TranslationsService.MOUNTAIN_MAP_CACHE_KEY,
+    );
+    if (cached) return cached;
     const client = this.supabase.getClient();
     const { data, error } = await client
       .from('mountain_translations')
@@ -129,6 +156,11 @@ export class TranslationsService {
     if (error) throw new InternalServerErrorException(error.message);
     const map: Record<string, string> = {};
     for (const r of data || []) map[r.zh] = r.en;
+    await this.cacheManager.set(
+      TranslationsService.MOUNTAIN_MAP_CACHE_KEY,
+      map,
+      TranslationsService.MAP_CACHE_TTL_MS,
+    );
     return map;
   }
 
@@ -991,6 +1023,7 @@ export class TranslationsService {
       .select()
       .single();
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(TranslationsService.RACE_MAP_CACHE_KEY);
     return data;
   }
 
@@ -1001,6 +1034,7 @@ export class TranslationsService {
       .delete()
       .eq('zh', zh.trim());
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(TranslationsService.RACE_MAP_CACHE_KEY);
   }
 
   async listMountains(needsReviewOnly = false): Promise<MountainTranslation[]> {
@@ -1032,6 +1066,7 @@ export class TranslationsService {
       .select()
       .single();
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(TranslationsService.MOUNTAIN_MAP_CACHE_KEY);
     return data;
   }
 
@@ -1042,5 +1077,6 @@ export class TranslationsService {
       .delete()
       .eq('zh', zh.trim());
     if (error) throw new InternalServerErrorException(error.message);
+    await this.cacheManager.del(TranslationsService.MOUNTAIN_MAP_CACHE_KEY);
   }
 }

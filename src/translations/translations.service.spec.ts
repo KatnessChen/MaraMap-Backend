@@ -1,9 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { TranslationsService } from './translations.service';
 import { SupabaseService } from '../supabase/supabase.service';
 
 describe('TranslationsService', () => {
   let service: TranslationsService;
+
+  // getRaceMap()/getMountainMap() are cached — returning undefined from
+  // get() means every test still exercises the real Supabase-fetch path.
+  const mockCacheManager = {
+    get: jest.fn().mockResolvedValue(undefined),
+    set: jest.fn().mockResolvedValue(undefined),
+    del: jest.fn().mockResolvedValue(undefined),
+  };
 
   // Minimal chainable Supabase mock — each test stages what `.then()`
   // resolves to for the query(ies) it cares about, mirroring the pattern in
@@ -35,10 +44,12 @@ describe('TranslationsService', () => {
           provide: SupabaseService,
           useValue: { getClient: jest.fn().mockReturnValue(mockClient) },
         },
+        { provide: CACHE_MANAGER, useValue: mockCacheManager },
       ],
     }).compile();
     service = module.get<TranslationsService>(TranslationsService);
     jest.clearAllMocks();
+    mockCacheManager.get.mockResolvedValue(undefined);
     mockClient.from.mockReturnThis();
     mockClient.select.mockReturnThis();
     mockClient.insert.mockReturnThis();
