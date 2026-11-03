@@ -133,6 +133,7 @@ secrets=(
   "user_id"
   "admin_username"
   "admin_password"
+  "jwt_secret"
   "r2_access_key_id"
   "r2_secret_access_key"
   "r2_endpoint"
@@ -162,6 +163,9 @@ done
 > `admin_username`/`admin_password` are required, not optional: `AuthService`
 > reads them via `ConfigService.getOrThrow()` at boot, so a missing secret
 > here crashes the whole app on deploy, not just the admin login route.
+>
+> `jwt_secret` is required the same way and signs admin tokens. Use a long random
+> value, for example from `openssl rand -hex 32`, and never reuse or commit it.
 
 ---
 

@@ -128,6 +128,7 @@ Actions secrets; they must exist in Secret Manager first (see
 - `USER_ID`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
+- `JWT_SECRET`
 - `R2_ACCESS_KEY_ID`
 - `R2_SECRET_ACCESS_KEY`
 - `R2_ENDPOINT`
@@ -137,6 +138,10 @@ Actions secrets; they must exist in Secret Manager first (see
 `AuthService` reads `ADMIN_USERNAME`/`ADMIN_PASSWORD` via
 `ConfigService.getOrThrow()` — if either secret is missing from a Cloud Run
 revision's `--set-secrets`, the whole app fails to boot, not just `/auth/login`.
+
+`AuthModule` reads `JWT_SECRET` the same way, also with no fallback. It signs
+admin tokens, so anyone who has it can act as an admin: keep it random and never
+commit it. Changing it logs every admin out once.
 
 ---
 
@@ -151,7 +156,7 @@ Secret Manager instead, referenced by name in the deploy step:
 
 The application secrets Cloud Run mounts (`supabase_url`,
 `supabase_service_role_key`, `gemini_api_key`, `user_id`, `admin_username`,
-`admin_password`, `r2_access_key_id`, `r2_secret_access_key`, `r2_endpoint`,
+`admin_password`, `jwt_secret`, `r2_access_key_id`, `r2_secret_access_key`, `r2_endpoint`,
 `r2_bucket_name`, `r2_public_url`) are created directly in **GCP Secret
 Manager**, not in GitHub — see [SETUP_GCP.md](./SETUP_GCP.md) §6.
 

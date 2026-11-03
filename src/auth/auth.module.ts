@@ -11,8 +11,9 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        secret:
-          configService.get<string>('JWT_SECRET') || 'maramap_secret_key_2026',
+        // No fallback: anyone holding this secret can sign admin tokens, so a
+        // missing value must fail startup rather than use something guessable.
+        secret: configService.getOrThrow<string>('JWT_SECRET'),
         signOptions: { expiresIn: '24h' },
       }),
       inject: [ConfigService],
