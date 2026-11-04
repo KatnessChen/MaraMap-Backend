@@ -7,6 +7,10 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "moduleNameMapper": {
+    "^ai$": "<rootDir>/mocks/ai-sdk.ts",
+    "^@ai-sdk/google$": "<rootDir>/mocks/ai-sdk.ts"
+  },
   "reporters": [
     "default",
     ["jest-html-reporters", {

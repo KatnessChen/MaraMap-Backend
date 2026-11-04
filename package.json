@@ -23,6 +23,7 @@
     "gen:spec": "ts-node -r tsconfig-paths/register utils/gen-spec.ts"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.111",
     "@aws-sdk/client-s3": "^3.1094.0",
     "@aws-sdk/lib-storage": "^3.1094.0",
     "@aws-sdk/s3-request-presigner": "^3.1094.0",
@@ -38,6 +39,7 @@
     "@nestjs/swagger": "7",
     "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.98.0",
+    "ai": "^7.0.162",
     "cache-manager": "^7.2.9",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -52,7 +54,8 @@
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
-    "unzipper": "^0.12.5"
+    "unzipper": "^0.12.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",

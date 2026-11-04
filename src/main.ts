@@ -13,12 +13,14 @@ async function bootstrap() {
   // X-Forwarded-For entry.
   app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
-  // Exclude the FB-import streaming endpoint — compression buffers chunks to
-  // improve ratio, which would delay live log lines reaching the browser.
+  // Exclude the streaming endpoints — compression buffers chunks to improve
+  // ratio, which would delay live log lines and chat answers reaching the
+  // browser.
   app.use(
     compression({
       filter: (req, res) => {
         if (req.path.startsWith('/api/v1/admin/fb-import')) return false;
+        if (req.path.startsWith('/api/v1/admin/chat')) return false;
         return compression.filter(req, res);
       },
     }),
