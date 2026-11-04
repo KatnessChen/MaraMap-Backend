@@ -8,7 +8,7 @@ Two scheduled GitHub Actions cover it:
 | Workflow | What | When | Destinations |
 |---|---|---|---|
 | `backup-supabase.yml` | `pg_dump` of `public` schema | nightly 08:00 UTC | GitHub artifact (90d) + R2 `backups/supabase/` |
-| `backup-r2.yml` | `rclone sync` of media | weekly Sun 09:00 UTC | Backblaze B2 (off-Cloudflare) |
+| `backup-r2.yml` | `rclone sync` of media | weekly Sun 09:00 UTC | Google Drive `MaraMap-R2-Backup/` (off-Cloudflare) |
 
 Both open a GitHub issue labelled `backup-failure` if they fail, and both have a
 `workflow_dispatch` button to run on demand from the Actions tab.
@@ -34,35 +34,47 @@ Once this secret exists the nightly DB backup works. The R2 copy step is skipped
 automatically until the R2 secrets below are present — the GitHub artifact alone
 is already a real backup.
 
-### 2. R2 media backup secrets (Backblaze B2)
+### 2. R2 media backup secrets (Google Drive)
 
 R2 → another R2 bucket is not a backup (same account/credentials die together),
-so the media mirror targets Backblaze B2.
+so the media mirror targets Google Drive, using the `sbxew99@gmail.com` account
+and a Desktop OAuth client named `MaraMap R2 backup (rclone)` in GCP project
+`maramap`.
 
-1. Create a B2 account and a **private** bucket, e.g. `maramap-media-backup`.
-2. Create an application key scoped to that bucket → note the keyID and appKey.
-3. Note the bucket's S3 endpoint (B2 bucket page), e.g.
-   `https://s3.us-west-004.backblazeb2.com`.
+1. In Google Auth Platform → Audience, keep the status **In production**. In
+   Testing, Google expires the refresh token after 7 days, which breaks a weekly
+   backup.
+2. In Clients, create a **Desktop app** client. Google shows its secret once.
+3. Point rclone at it and authorize the backup account:
+   ```bash
+   rclone config update gdrive client_id=<id> client_secret=<secret> scope=drive.file config_refresh_token=false
+   rclone config reconnect gdrive:
+   ```
 4. Add these repository secrets:
 
    | Secret | Value |
    |---|---|
-   | `B2_ENDPOINT` | `https://s3.us-west-004.backblazeb2.com` |
-   | `B2_BUCKET_NAME` | `maramap-media-backup` |
-   | `B2_KEY_ID` | B2 application keyID |
-   | `B2_APP_KEY` | B2 application key |
+   | `GDRIVE_CLIENT_ID` | OAuth client ID |
+   | `GDRIVE_CLIENT_SECRET` | OAuth client secret |
+   | `GDRIVE_TOKEN` | Output of `rclone config dump \| jq -r .gdrive.token`, piped into `gh secret set` |
 
 The source R2 secrets (`R2_ENDPOINT`, `R2_BUCKET_NAME`, `R2_ACCESS_KEY_ID`,
 `R2_SECRET_ACCESS_KEY`) are the same ones the deploy already uses.
 
-Cost: R2 egress is free; B2 storage ≈ $6/TB/mo → ~$0.07/mo for the current 11 GB.
+Scope is `drive.file`, so rclone can only see files it created. Do not create the
+destination folder by hand; a manually created folder is invisible to rclone.
+
+The first sync copies about 32 GiB. The job limit is 6 hours, and a rerun resumes
+where the last one stopped.
+
+Cost: R2 egress is free, and the mirror uses the account's existing Drive quota.
 
 ## How the media mirror protects against deletes
 
 `rclone sync` alone would delete from the backup anything deleted at the source —
 so a wrongly-deleted post (`fb-posts.service.ts` `remove()` hard-deletes its R2
 media) would erase the backup copy too on the next run. The workflow uses
-`--backup-dir b2:<bucket>/_deleted/<date>/`, which **moves** vanished objects into
+`--backup-dir gdrive:MaraMap-R2-Backup/_deleted/<date>/`, which **moves** vanished objects into
 a dated tombstone folder instead of deleting them. Live mirror is under
 `current/`; recoverable deletions accumulate under `_deleted/`.
 
@@ -82,8 +94,8 @@ into a fresh project, recreate the admin user via Supabase Auth.
 
 ### Media
 ```bash
-rclone copy b2:<bucket>/current r2:<bucket>            # whole bucket back
-rclone copy b2:<bucket>/_deleted/<date>/<key> r2:<bucket>/<key>   # one file
+rclone copy gdrive:MaraMap-R2-Backup/current r2:<bucket>            # whole bucket back
+rclone copyto gdrive:MaraMap-R2-Backup/_deleted/<date>/<key> r2:<bucket>/<key>   # one file
 ```
 
 ## Verification built in
@@ -91,5 +103,5 @@ rclone copy b2:<bucket>/_deleted/<date>/<key> r2:<bucket>/<key>   # one file
 - **DB**: fails the run unless the gz passes an integrity test, is >10 KB,
   contains `CREATE TABLE` for `fb_posts` / `participant_stats` / `page_views`,
   and has ≥100 `fb_posts` data rows. A 0-byte "successful" backup can't happen.
-- **Media**: fails unless the B2 mirror is non-empty and its object count is
+- **Media**: fails unless the Drive mirror is non-empty and its object count is
   within 1% of the source.
