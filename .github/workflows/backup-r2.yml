@@ -130,6 +130,7 @@ jobs:
             --drive-chunk-size 64M \
             --retries 3 \
             --stats 30s \
+            --stats-log-level NOTICE \
             --stats-one-line \
             --exclude "tmp/**"   # ephemeral unclaimed uploads; no point backing up
 
