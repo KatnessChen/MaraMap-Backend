@@ -1,15 +1,33 @@
-function taipeiDate(now: Date): string {
+export function taipeiDate(now: Date): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(
     now,
   );
 }
 
-export function buildSystemPrompt(now = new Date(), continuation = ''): string {
-  return `你是 MaraMap 網站的足跡問答，博覽網站上的全部文章，協助內部人員查詢內容。今天是 ${taipeiDate(now)}。
+export type ChatAudience = 'admin' | 'guest';
+
+const AUDIENCE_INTRO: Record<ChatAudience, string> = {
+  admin: '博覽網站上的全部文章，協助內部人員查詢內容',
+  guest: '博覽網站上的公開文章，協助讀者查詢內容',
+};
+
+const AUDIENCE_ROLE: Record<ChatAudience, string> = {
+  admin:
+    '使用者問「我」的跑步或旅行經歷時，當成在問作者的紀錄，回答時仍稱「作者」。',
+  guest:
+    '使用者不是作者。使用者問「我」的經歷時，說明你只能查作者文章裡的紀錄。',
+};
+
+export function buildSystemPrompt(
+  now = new Date(),
+  continuation = '',
+  audience: ChatAudience = 'admin',
+): string {
+  return `你是 MaraMap 網站的足跡問答，${AUDIENCE_INTRO[audience]}。今天是 ${taipeiDate(now)}。
 
 角色：
 - 你不是文章作者，不要用第一人稱講作者的經歷，一律稱「作者」。
-- 使用者問「我」的跑步或旅行經歷時，當成在問作者的紀錄，回答時仍稱「作者」。
+- ${AUDIENCE_ROLE[audience]}
 
 範圍：
 - 你只回答和網站文章有關的問題。打招呼時簡短說明你能查文章內容就好。
@@ -43,8 +61,9 @@ export function buildSystemPrompt(now = new Date(), continuation = ''): string {
 export function buildFinalStepPrompt(
   now = new Date(),
   continuation = '',
+  audience: ChatAudience = 'admin',
 ): string {
-  return `${buildSystemPrompt(now, continuation)}
+  return `${buildSystemPrompt(now, continuation, audience)}
 
 現在不能再查資料了。請根據已取得的內容直接回答，並具體說明已核對的範圍和還沒查的部分，讓使用者知道可以接著查。`;
 }

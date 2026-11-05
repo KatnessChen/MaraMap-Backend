@@ -122,4 +122,76 @@ describe('AuthService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('chat guests', () => {
+    const makeService = (passcode?: string) =>
+      new AuthService(
+        {
+          getOrThrow: jest.fn((key: string) => `test-${key}`),
+          get: jest.fn(() => passcode),
+        } as unknown as ConfigService,
+        jwtService as unknown as JwtService,
+      );
+
+    it('gives the right passcode a 30-day token that is not an admin one', async () => {
+      const guests = makeService('test-passcode');
+
+      await expect(
+        guests.loginChatGuest('test-passcode', '小明'),
+      ).resolves.toEqual({
+        token: 'mock-jwt-token',
+        nickname: '小明',
+      });
+
+      const [payload, options] = jwtService.sign.mock.calls[0];
+      expect(payload.role).toBe('chat_guest');
+      expect(payload.nickname).toBe('小明');
+      expect(payload.sub).toEqual(expect.any(String));
+      expect(options).toEqual({ expiresIn: '30d' });
+    });
+
+    it('rejects a wrong passcode', async () => {
+      await expect(
+        makeService('test-passcode').loginChatGuest('wrong-passcode', '小明'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('lets nobody in when no passcode is configured', async () => {
+      const guests = makeService(undefined);
+
+      await expect(
+        guests.loginChatGuest('test-passcode', '小明'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(guests.verifyChatGuestToken('any')).resolves.toBeNull();
+    });
+
+    it('accepts its own token and signs guests out when the passcode changes', async () => {
+      await makeService('test-passcode').loginChatGuest(
+        'test-passcode',
+        '小明',
+      );
+      const [payload] = jwtService.sign.mock.calls[0];
+      jwtService.verifyAsync.mockResolvedValue(payload);
+
+      await expect(
+        makeService('test-passcode').verifyChatGuestToken('token'),
+      ).resolves.toEqual({ id: payload.sub, nickname: '小明' });
+      await expect(
+        makeService('changed-passcode').verifyChatGuestToken('token'),
+      ).resolves.toBeNull();
+    });
+
+    it('does not treat an admin token as a guest, or a guest token as admin', async () => {
+      const guests = makeService('test-passcode');
+
+      jwtService.verifyAsync.mockResolvedValue({ sub: 'admin', role: 'admin' });
+      await expect(guests.verifyChatGuestToken('token')).resolves.toBeNull();
+
+      await guests.loginChatGuest('test-passcode', '小明');
+      jwtService.verifyAsync.mockResolvedValue(
+        jwtService.sign.mock.calls[0][0],
+      );
+      await expect(guests.verifyAdminToken('token')).resolves.toBe(false);
+    });
+  });
 });

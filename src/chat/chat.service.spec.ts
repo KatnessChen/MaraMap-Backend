@@ -584,4 +584,189 @@ describe('ChatService', () => {
       );
     });
   });
+
+  describe('guests', () => {
+    const GUEST_ID = '33333333-3333-4333-8333-333333333333';
+    const GUEST = { id: GUEST_ID, nickname: '小明' };
+    const filtersOf = (client: any, table: string, method: string) =>
+      client.from.mock.results
+        .filter(
+          (_: unknown, index: number) =>
+            client.from.mock.calls[index][0] === table,
+        )
+        .flatMap((result: any) => result.value[method].mock.calls);
+
+    it('stores a new conversation under the guest, with hidden posts off', async () => {
+      const { client, writes } = makeClient({
+        chat_sessions: [{ data: { id: SESSION_ID }, error: null }],
+        chat_messages: [
+          { data: [], error: null }, // today's spend
+          { data: [], error: null }, // history
+        ],
+      });
+      getClient.mockReturnValue(client);
+
+      await service.respond({ question: '問題' }, res(), GUEST);
+
+      expect(
+        writes.find((write) => write.table === 'chat_sessions')?.value,
+      ).toEqual({ title: '問題', guest_id: GUEST_ID, guest_nickname: '小明' });
+      expect(options().system).toContain('公開文章');
+      expect(options().system).not.toContain('內部人員');
+      (client as any).rpc = jest
+        .fn()
+        .mockResolvedValue({ data: [], error: null });
+      await options().tools.search_posts.execute({ keywords: ['抽筋'] });
+      expect((client as any).rpc.mock.calls[0][1].p_include_hidden).toBe(false);
+    });
+
+    it("refuses another owner's conversation", async () => {
+      const { client } = makeClient({
+        chat_sessions: [{ data: null, error: null }],
+        chat_messages: [{ data: [], error: null }],
+      });
+      getClient.mockReturnValue(client);
+
+      await expect(
+        service.respond(
+          { sessionId: SESSION_ID, question: '問題' },
+          res(),
+          GUEST,
+        ),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(filtersOf(client, 'chat_sessions', 'eq')).toContainEqual([
+        'guest_id',
+        GUEST_ID,
+      ]);
+    });
+
+    it('stops before the model once the shared daily budget is used up', async () => {
+      const { client, writes } = makeClient({
+        chat_messages: [
+          { data: [{ cost_usd: '0.25' }, { cost_usd: '0.15' }], error: null },
+        ],
+      });
+      getClient.mockReturnValue(client);
+
+      await expect(
+        service.respond({ question: '問題' }, res(), GUEST),
+      ).rejects.toMatchObject({ status: 429 });
+      expect(streamText).not.toHaveBeenCalled();
+      expect(writes).toEqual([]);
+    });
+
+    it('does not hold admin questions to the guest budget', async () => {
+      const { client } = makeClient(newSessionQueues());
+      getClient.mockReturnValue(client);
+
+      await service.respond({ question: '問題' }, res());
+
+      expect(filtersOf(client, 'chat_messages', 'gte')).toEqual([]);
+      expect(streamText).toHaveBeenCalled();
+    });
+
+    it('lists only the guest conversations, and admin only its own', async () => {
+      const guest = makeClient({
+        chat_sessions: [{ data: [], error: null, count: 0 }],
+      });
+      getClient.mockReturnValue(guest.client);
+      await service.listSessions(30, 0, false, GUEST_ID);
+      expect(filtersOf(guest.client, 'chat_sessions', 'eq')).toContainEqual([
+        'guest_id',
+        GUEST_ID,
+      ]);
+
+      const admin = makeClient({
+        chat_sessions: [{ data: [], error: null, count: 0 }],
+      });
+      getClient.mockReturnValue(admin.client);
+      await service.listSessions(30, 0);
+      expect(filtersOf(admin.client, 'chat_sessions', 'is')).toContainEqual([
+        'guest_id',
+        null,
+      ]);
+    });
+
+    it("cannot archive or read someone else's conversation", async () => {
+      const { client } = makeClient({
+        chat_sessions: [
+          { data: null, error: null },
+          { data: null, error: null },
+        ],
+      });
+      getClient.mockReturnValue(client);
+
+      await expect(
+        service.archive(SESSION_ID, GUEST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(
+        service.getSession(SESSION_ID, GUEST_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('does not tell the model the nickname', async () => {
+      const { client } = makeClient({
+        chat_sessions: [{ data: { id: SESSION_ID }, error: null }],
+        chat_messages: [
+          { data: [], error: null },
+          { data: [], error: null },
+        ],
+      });
+      getClient.mockReturnValue(client);
+
+      await service.respond({ question: '問題' }, res(), GUEST);
+
+      expect(JSON.stringify(options().messages)).not.toContain('小明');
+      expect(options().system).not.toContain('小明');
+    });
+
+    it('lists guest conversations for admins, with nicknames and archived ones', async () => {
+      const session = { id: SESSION_ID, title: '問題', guest_nickname: '小明' };
+      const { client } = makeClient({
+        chat_sessions: [{ data: [session], error: null, count: 1 }],
+      });
+      getClient.mockReturnValue(client);
+
+      await expect(service.listGuestSessions(30, 0)).resolves.toEqual({
+        data: [session],
+        total: 1,
+      });
+      expect(filtersOf(client, 'chat_sessions', 'not')).toContainEqual([
+        'guest_id',
+        'is',
+        null,
+      ]);
+      expect(filtersOf(client, 'chat_sessions', 'is')).toEqual([]);
+    });
+
+    it('lets admins read a guest conversation but not treat an admin one as a guest', async () => {
+      const { client } = makeClient({
+        chat_sessions: [{ data: null, error: null }],
+        chat_messages: [{ data: [], error: null }],
+      });
+      getClient.mockReturnValue(client);
+
+      await expect(service.getGuestSession(SESSION_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(filtersOf(client, 'chat_sessions', 'not')).toContainEqual([
+        'guest_id',
+        'is',
+        null,
+      ]);
+    });
+
+    it('leaves the raw provider error out of what a guest reads back', async () => {
+      const { client } = makeClient({
+        chat_sessions: [{ data: { id: SESSION_ID }, error: null }],
+        chat_messages: [{ data: [], error: null }],
+      });
+      getClient.mockReturnValue(client);
+
+      await service.getSession(SESSION_ID, GUEST_ID);
+
+      const [columns] = filtersOf(client, 'chat_messages', 'select')[0];
+      expect(columns).not.toContain('error');
+    });
+  });
 });

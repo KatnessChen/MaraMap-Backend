@@ -21,6 +21,7 @@ async function bootstrap() {
       filter: (req, res) => {
         if (req.path.startsWith('/api/v1/admin/fb-import')) return false;
         if (req.path.startsWith('/api/v1/admin/chat')) return false;
+        if (req.path.startsWith('/api/v1/chat')) return false;
         return compression.filter(req, res);
       },
     }),

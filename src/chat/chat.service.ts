@@ -1,4 +1,6 @@
 import {
+  HttpException,
+  HttpStatus,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -8,6 +10,7 @@ import type { Response } from 'express';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { stepCountIs, streamText } from 'ai';
 import { errorMessage } from '../common/error-message';
+import type { ChatGuest } from '../auth/auth.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import {
   CHAT_MODEL,
@@ -19,6 +22,7 @@ import {
   buildContinuationNote,
   buildFinalStepPrompt,
   buildSystemPrompt,
+  taipeiDate,
   type ToolCallLog,
 } from './chat-prompt';
 import {
@@ -40,6 +44,9 @@ const CONTENT_FILTER_REPLY =
   '這個問題我無法回答。我可以幫你查網站上的文章內容。';
 // Shown instead of an empty bubble if a run ends without any text.
 const EMPTY_ANSWER_REPLY = '這次沒有整理出回答，請換個方式再問一次。';
+// All guests together, so a leaked passcode can't use up the GCP spend cap,
+// which would also stop imports and translations.
+const GUEST_DAILY_BUDGET_USD = 0.4;
 
 type MessageStatus = 'done' | 'stopped' | 'truncated' | 'failed';
 
@@ -90,7 +97,12 @@ export class ChatService {
     return this.google(CHAT_MODEL);
   }
 
-  async listSessions(limit: number, offset: number, archived = false) {
+  async listSessions(
+    limit: number,
+    offset: number,
+    archived = false,
+    guestId: string | null = null,
+  ) {
     const query = this.supabase
       .getClient()
       .from('chat_sessions')
@@ -98,10 +110,13 @@ export class ChatService {
         'id, title, created_at, last_message_at, last_answer_at, last_answer_status, last_read_at, archived_at',
         { count: 'exact' },
       );
+    const owned = guestId
+      ? query.eq('guest_id', guestId)
+      : query.is('guest_id', null);
     const { data, error, count } = await (
       archived
-        ? query.not('archived_at', 'is', null)
-        : query.is('archived_at', null)
+        ? owned.not('archived_at', 'is', null)
+        : owned.is('archived_at', null)
     )
       .order('last_message_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -118,25 +133,40 @@ export class ChatService {
     };
   }
 
-  markRead(id: string) {
-    return this.updateSession(id, { last_read_at: new Date().toISOString() });
+  markRead(id: string, guestId: string | null = null) {
+    return this.updateSession(
+      id,
+      { last_read_at: new Date().toISOString() },
+      guestId,
+    );
   }
 
   /** Soft delete: the conversation and its messages stay in the database. */
-  archive(id: string) {
-    return this.updateSession(id, { archived_at: new Date().toISOString() });
+  archive(id: string, guestId: string | null = null) {
+    return this.updateSession(
+      id,
+      { archived_at: new Date().toISOString() },
+      guestId,
+    );
   }
 
-  restore(id: string) {
-    return this.updateSession(id, { archived_at: null });
+  restore(id: string, guestId: string | null = null) {
+    return this.updateSession(id, { archived_at: null }, guestId);
   }
 
-  private async updateSession(id: string, changes: Record<string, unknown>) {
-    const { data, error } = await this.supabase
+  private async updateSession(
+    id: string,
+    changes: Record<string, unknown>,
+    guestId: string | null,
+  ) {
+    const query = this.supabase
       .getClient()
       .from('chat_sessions')
       .update(changes)
-      .eq('id', id)
+      .eq('id', id);
+    const { data, error } = await (
+      guestId ? query.eq('guest_id', guestId) : query.is('guest_id', null)
+    )
       .select('id')
       .maybeSingle();
     if (error) throw new InternalServerErrorException(error.message);
@@ -144,18 +174,22 @@ export class ChatService {
     return { id };
   }
 
-  async getSession(id: string) {
+  async getSession(id: string, guestId: string | null = null) {
     const client = this.supabase.getClient();
+    const sessionQuery = client
+      .from('chat_sessions')
+      .select('id, title, created_at, last_message_at')
+      .eq('id', id);
     const [session, messages] = await Promise.all([
-      client
-        .from('chat_sessions')
-        .select('id, title, created_at, last_message_at')
-        .eq('id', id)
-        .maybeSingle(),
+      (guestId
+        ? sessionQuery.eq('guest_id', guestId)
+        : sessionQuery.is('guest_id', null)
+      ).maybeSingle(),
       client
         .from('chat_messages')
+        // The raw provider error stays on the admin side.
         .select(
-          'id, role, content, citations, status, error, created_at, step_limit_reached',
+          `id, role, content, citations, status, ${guestId ? '' : 'error, '}created_at, step_limit_reached`,
         )
         .eq('session_id', id)
         .order('created_at', { ascending: true }),
@@ -170,21 +204,93 @@ export class ChatService {
     return { ...session.data, messages: messages.data ?? [] };
   }
 
-  private async ensureSession(dto: ChatRequestDto): Promise<string> {
+  private async assertGuestBudgetLeft() {
+    const { data, error } = await this.supabase
+      .getClient()
+      .from('chat_messages')
+      .select('cost_usd, chat_sessions!inner(guest_id)')
+      .not('chat_sessions.guest_id', 'is', null)
+      .gte('created_at', `${taipeiDate(new Date())}T00:00:00+08:00`);
+    if (error) throw new InternalServerErrorException(error.message);
+    const spent = (data ?? []).reduce(
+      (total, row) => total + Number(row.cost_usd ?? 0),
+      0,
+    );
+    if (spent >= GUEST_DAILY_BUDGET_USD) {
+      throw new HttpException(
+        '今天的問答次數用完了，明天再來問吧。',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
+
+  /** Read-only for admins, and includes what the guest has archived. */
+  async listGuestSessions(limit: number, offset: number) {
+    const { data, error, count } = await this.supabase
+      .getClient()
+      .from('chat_sessions')
+      .select(
+        'id, title, guest_nickname, created_at, last_message_at, last_answer_status, archived_at',
+        { count: 'exact' },
+      )
+      .not('guest_id', 'is', null)
+      .order('last_message_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (error) throw new InternalServerErrorException(error.message);
+    return { data: data ?? [], total: count ?? 0 };
+  }
+
+  async getGuestSession(id: string) {
+    const client = this.supabase.getClient();
+    const [session, messages] = await Promise.all([
+      client
+        .from('chat_sessions')
+        .select(
+          'id, title, guest_nickname, created_at, last_message_at, archived_at',
+        )
+        .eq('id', id)
+        .not('guest_id', 'is', null)
+        .maybeSingle(),
+      client
+        .from('chat_messages')
+        .select('id, role, content, citations, status, error, created_at')
+        .eq('session_id', id)
+        .order('created_at', { ascending: true }),
+    ]);
+    if (session.error) {
+      throw new InternalServerErrorException(session.error.message);
+    }
+    if (messages.error) {
+      throw new InternalServerErrorException(messages.error.message);
+    }
+    if (!session.data) throw new NotFoundException('找不到這段對話');
+    return { ...session.data, messages: messages.data ?? [] };
+  }
+
+  private async ensureSession(
+    dto: ChatRequestDto,
+    guest: ChatGuest | null,
+  ): Promise<string> {
+    const guestId = guest?.id ?? null;
     const client = this.supabase.getClient();
     if (dto.sessionId) {
-      const { data, error } = await client
+      const query = client
         .from('chat_sessions')
         .select('id')
-        .eq('id', dto.sessionId)
-        .maybeSingle();
+        .eq('id', dto.sessionId);
+      const { data, error } = await (
+        guestId ? query.eq('guest_id', guestId) : query.is('guest_id', null)
+      ).maybeSingle();
       if (error) throw new InternalServerErrorException(error.message);
       if (!data) throw new NotFoundException('找不到這段對話');
       return dto.sessionId;
     }
     const { data, error } = await client
       .from('chat_sessions')
-      .insert({ title: dto.question.trim().slice(0, TITLE_LENGTH) })
+      .insert({
+        title: dto.question.trim().slice(0, TITLE_LENGTH),
+        ...(guest && { guest_id: guest.id, guest_nickname: guest.nickname }),
+      })
       .select('id')
       .single();
     if (error) throw new InternalServerErrorException(error.message);
@@ -238,12 +344,18 @@ export class ChatService {
    * before the model runs and the answer whenever the run ends, including a
    * stop or a failure partway through, so nothing asked is ever lost.
    */
-  async respond(dto: ChatRequestDto, res: Response): Promise<void> {
+  async respond(
+    dto: ChatRequestDto,
+    res: Response,
+    guest: ChatGuest | null = null,
+  ): Promise<void> {
     const userId = process.env.USER_ID;
     if (!userId) throw new InternalServerErrorException('Missing USER_ID');
+    const audience = guest ? 'guest' : 'admin';
+    if (guest) await this.assertGuestBudgetLeft();
 
     const question = dto.question.trim();
-    const sessionId = await this.ensureSession(dto);
+    const sessionId = await this.ensureSession(dto, guest);
     const history = await this.loadHistory(sessionId);
     const lastAnswer = history[history.length - 1];
     const continuation = lastAnswer?.step_limit_reached
@@ -319,12 +431,17 @@ export class ChatService {
 
     const result = streamText({
       model: this.getModel(),
-      system: buildSystemPrompt(undefined, continuation),
+      system: buildSystemPrompt(undefined, continuation, audience),
       messages: [
         ...history.map((row) => ({ role: row.role, content: row.content })),
         { role: 'user' as const, content: question },
       ],
-      tools: buildChatTools(this.supabase.getClient(), userId, registry),
+      tools: buildChatTools(
+        this.supabase.getClient(),
+        userId,
+        registry,
+        !guest,
+      ),
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       abortSignal: abort.signal,
       stopWhen: stepCountIs(MAX_STEPS),
@@ -337,7 +454,7 @@ export class ChatService {
         stepNumber === MAX_STEPS - 1
           ? {
               activeTools: [],
-              system: buildFinalStepPrompt(undefined, continuation),
+              system: buildFinalStepPrompt(undefined, continuation, audience),
               messages: withoutToolHistory(messages),
             }
           : {},

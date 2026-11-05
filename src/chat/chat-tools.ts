@@ -118,6 +118,7 @@ export function buildChatTools(
   client: SupabaseClient,
   userId: string,
   registry: CitationRegistry,
+  includeHidden = true,
 ): ToolSet {
   return {
     search_posts: tool({
@@ -146,6 +147,7 @@ export function buildChatTools(
           p_date_to: input.date_to ?? null,
           p_limit: PAGE_SIZE,
           p_offset: offset,
+          p_include_hidden: includeHidden,
         });
         if (error) {
           logger.error(`search_posts failed: ${error.message}`);
@@ -176,13 +178,16 @@ export function buildChatTools(
         '列出作者所有賽事文章的編號、賽事名稱、英文名稱（有的話）、日期、國家和分類，依日期排序。一次回傳完整清單。',
       inputSchema: z.object({}),
       execute: async () => {
+        const raceQuery = client
+          .from('fb_posts')
+          .select('id, title, event_date, category, is_hidden, metadata')
+          .eq('user_id', userId)
+          .not('metadata->>race_name', 'is', null);
         const [races, translations] = await Promise.all([
-          client
-            .from('fb_posts')
-            .select('id, title, event_date, category, is_hidden, metadata')
-            .eq('user_id', userId)
-            .not('metadata->>race_name', 'is', null)
-            .order('event_date', { ascending: true }),
+          (includeHidden ? raceQuery : raceQuery.eq('is_hidden', false)).order(
+            'event_date',
+            { ascending: true },
+          ),
           client.from('race_translations').select('zh, en'),
         ]);
         if (races.error || translations.error) {
@@ -236,15 +241,17 @@ export function buildChatTools(
           // is exactly the range between these two bounds.
           const posts = await Promise.all(
             refs.map(async (ref) => {
-              const { data, error } = await client
+              const query = client
                 .from('fb_posts')
                 .select(
                   'id, title, content, event_date, category, is_hidden, is_personal_best, metadata',
                 )
                 .eq('user_id', userId)
                 .gte('id', `${ref}-0000-0000-0000-000000000000`)
-                .lte('id', `${ref}-ffff-ffff-ffff-ffffffffffff`)
-                .maybeSingle();
+                .lte('id', `${ref}-ffff-ffff-ffff-ffffffffffff`);
+              const { data, error } = await (
+                includeHidden ? query : query.eq('is_hidden', false)
+              ).maybeSingle();
               if (error) throw new Error(error.message);
               return data as PostRow | null;
             }),
