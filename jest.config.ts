@@ -7,6 +7,10 @@ const config: Config = {
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
+  moduleNameMapper: {
+    '^ai$': '<rootDir>/../test/mocks/ai-sdk.ts',
+    '^@ai-sdk/google$': '<rootDir>/../test/mocks/ai-sdk.ts',
+  },
   collectCoverageFrom: [
     '**/*.(t|j)s',
     '!**/main.ts',         // Bootstrap entry point

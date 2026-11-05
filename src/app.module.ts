@@ -14,6 +14,7 @@ import { StatsModule } from './stats/stats.module';
 import { FbImportModule } from './fb-import/fb-import.module';
 import { LocationTranslationsModule } from './location-translations/location-translations.module';
 import { TranslationsModule } from './translations/translations.module';
+import { ChatModule } from './chat/chat.module';
 import { CrawlerLogMiddleware } from './common/crawler-log.middleware';
 
 @Module({
@@ -35,6 +36,7 @@ import { CrawlerLogMiddleware } from './common/crawler-log.middleware';
     FbImportModule,
     LocationTranslationsModule,
     TranslationsModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [

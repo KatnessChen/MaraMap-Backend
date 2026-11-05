@@ -9,6 +9,7 @@ import type { Cache } from 'cache-manager';
 import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 import { SupabaseService } from '../supabase/supabase.service';
 import { errorMessage } from '../common/error-message';
+import { normalizeGlossaryKey } from './glossary-key';
 
 // The installed @google/generative-ai SDK (0.24.1) predates Gemini 2.5's
 // "thinking" feature, so its GenerationConfig type doesn't declare
@@ -164,19 +165,6 @@ export class TranslationsService {
     return map;
   }
 
-  // Real fb_posts.metadata.race_name / .mountain_name values are messy free
-  // text (year prefixes, the 台/臺 variant character, abbreviations) — see
-  // the seed migration's comments, sourced from an actual frequency query
-  // against this project's data. Stripping a leading 4-digit year and
-  // normalizing 臺->台 before the lookup catches the common cases without
-  // needing to seed every observed variant as its own row.
-  private normalizeGlossaryKey(zh: string): string {
-    return zh
-      .trim()
-      .replace(/^\d{4}\s*/, '')
-      .replace(/臺/g, '台');
-  }
-
   /** Never returns null/blank — falls back to the zh string itself, same
    *  contract as FbPostsService.countryEn()/cityEn(). */
   raceEn(
@@ -187,7 +175,7 @@ export class TranslationsService {
     const trimmed = zh.trim();
     if (!trimmed) return null;
     return (
-      raceMap[trimmed] || raceMap[this.normalizeGlossaryKey(trimmed)] || trimmed
+      raceMap[trimmed] || raceMap[normalizeGlossaryKey(trimmed)] || trimmed
     );
   }
 
@@ -200,7 +188,7 @@ export class TranslationsService {
     if (!trimmed) return null;
     return (
       mountainMap[trimmed] ||
-      mountainMap[this.normalizeGlossaryKey(trimmed)] ||
+      mountainMap[normalizeGlossaryKey(trimmed)] ||
       trimmed
     );
   }
@@ -220,7 +208,7 @@ export class TranslationsService {
       kind === 'race' ? 'race_translations' : 'mountain_translations';
     const client = this.supabase.getClient();
     const trimmed = zh.trim();
-    const key = this.normalizeGlossaryKey(trimmed);
+    const key = normalizeGlossaryKey(trimmed);
 
     const { data: existing } = await client
       .from(table)
