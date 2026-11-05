@@ -54,6 +54,26 @@ export class ChatController {
     );
   }
 
+  @Get('guest-sessions')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '列出訪客的對話，最近的在前' })
+  listGuestSessions(
+    @Query('limit', new DefaultValuePipe(30), ParseIntPipe) limit: number,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+  ) {
+    return this.chat.listGuestSessions(
+      Math.min(Math.max(limit, 1), MAX_SESSIONS_PER_PAGE),
+      Math.max(offset, 0),
+    );
+  }
+
+  @Get('guest-sessions/:id')
+  @ApiBearerAuth('admin-token')
+  @ApiOperation({ summary: '讀取訪客的一段對話' })
+  getGuestSession(@Param('id', ParseUUIDPipe) id: string) {
+    return this.chat.getGuestSession(id);
+  }
+
   @Get('sessions/:id')
   @ApiBearerAuth('admin-token')
   @ApiOperation({ summary: '讀取一段對話的完整訊息' })

@@ -188,6 +188,34 @@ describe('buildChatTools', () => {
     expect(registry.extract('[a1b2c3d4]')).toHaveLength(1);
   });
 
+  it('only lets a guest read public posts', async () => {
+    query.maybeSingle.mockResolvedValue({ data: null, error: null });
+    const tools = buildChatTools(
+      client,
+      'user-1',
+      new CitationRegistry(),
+      false,
+    );
+
+    const result = await (tools.get_posts as any).execute({
+      refs: ['a1b2c3d4'],
+    });
+
+    expect(query.eq).toHaveBeenCalledWith('is_hidden', false);
+    expect(result.not_found).toEqual(['a1b2c3d4']);
+  });
+
+  it('keeps hidden posts readable on the admin side', async () => {
+    query.maybeSingle.mockResolvedValue({
+      data: row({ is_hidden: true }),
+      error: null,
+    });
+
+    await execute('get_posts', { refs: ['a1b2c3d4'] });
+
+    expect(query.eq).not.toHaveBeenCalledWith('is_hidden', false);
+  });
+
   it('get_posts reports refs it cannot find', async () => {
     query.maybeSingle.mockResolvedValue({ data: null, error: null });
 
@@ -269,6 +297,21 @@ describe('list_races', () => {
   };
   const run = (client: SupabaseClient, registry: CitationRegistry) =>
     (buildChatTools(client, 'user-1', registry).list_races as any).execute({});
+
+  it('leaves hidden races out for a guest', async () => {
+    const client = clientWith(
+      { data: [], error: null },
+      { data: [], error: null },
+    );
+
+    await (
+      buildChatTools(client, 'user-1', new CitationRegistry(), false)
+        .list_races as any
+    ).execute({});
+
+    const races = (client.from as jest.Mock).mock.results[0].value;
+    expect(races.eq).toHaveBeenCalledWith('is_hidden', false);
+  });
 
   it('returns every race with its English name and makes it citable', async () => {
     const registry = new CitationRegistry();
