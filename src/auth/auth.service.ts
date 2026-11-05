@@ -39,7 +39,7 @@ export class AuthService {
       this.configService.getOrThrow<string>('ADMIN_USERNAME');
     this.adminPassword =
       this.configService.getOrThrow<string>('ADMIN_PASSWORD');
-    this.chatPasscode = this.configService.get<string>('CHAT_PASSCODE');
+    this.chatPasscode = this.configService.get<string>('CHAT_CREDENTIALS');
   }
 
   async login(dto: LoginDto): Promise<{ token: string; role?: string }> {
